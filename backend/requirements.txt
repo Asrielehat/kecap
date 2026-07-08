@@ -1,0 +1,39 @@
+# Web Framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.19
+
+# Database
+sqlalchemy==2.0.36
+asyncpg==0.30.0
+psycopg2-binary==2.9.10
+alembic==1.14.0
+
+# Vector DB
+qdrant-client==1.12.2
+
+# Document Parsing
+pymupdf==1.24.14       # PDF
+python-pptx==1.0.2      # PPT
+python-docx==1.1.2      # Word
+markdown==3.7           # Markdown
+unstructured==0.16.11   # 通用文档解析
+python-magic-bin==0.4.14  # 文件类型检测 (Windows)
+
+# LLM / Embedding
+openai==1.57.4          # DeepSeek 兼容 OpenAI SDK
+tiktoken==0.8.0         # Token 计数
+
+# Reranker (Cross-encoder)
+sentence-transformers==3.3.1
+
+# Auth / Utils
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-dotenv==1.0.1
+httpx==0.28.1
+pydantic==2.10.3
+pydantic-settings==2.7.0
+
+# CORS
+starlette==0.42.0

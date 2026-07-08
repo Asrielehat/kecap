@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+venv/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Qdrant local storage
+backend/storage/qdrant_data/
+backend/data/
+
+# Database (SQLite)
+backend/storage/*.db
+
+# Uploaded files
+backend/storage/uploads/
