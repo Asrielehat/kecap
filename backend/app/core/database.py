@@ -11,10 +11,15 @@ settings = get_settings()
 # 确保数据目录存在
 Path(settings.sqlite_path).parent.mkdir(parents=True, exist_ok=True)
 
+# SQLite 需要 check_same_thread=False，PostgreSQL 不需要
+_connect_args = {}
+if "sqlite" in settings.database_url:
+    _connect_args["check_same_thread"] = False
+
 engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
-    connect_args={"check_same_thread": False},  # SQLite 需要
+    connect_args=_connect_args,
 )
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

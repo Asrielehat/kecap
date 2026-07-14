@@ -1,21 +1,27 @@
-version: "3.8"
+# ── 课答 Kecap —— Docker 一键部署 ──
+# 启动：docker compose up -d
+# 查看日志：docker compose logs -f
+# 停止：docker compose down
 
 services:
+  # ────────────────────────────
+  # 1. 向量数据库 —— Qdrant
+  # ────────────────────────────
   qdrant:
     image: qdrant/qdrant:latest
     container_name: kecap-qdrant
     ports:
       - "6333:6333"   # REST API
-      - "6334:6334"   # gRPC
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
+  # ────────────────────────────
+  # 2. 关系数据库 —— PostgreSQL
+  # ────────────────────────────
   postgres:
     image: postgres:16-alpine
     container_name: kecap-postgres
-    ports:
-      - "5432:5432"
     environment:
       POSTGRES_USER: kecap
       POSTGRES_PASSWORD: kecap123
@@ -23,7 +29,67 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kecap"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
+  # ────────────────────────────
+  # 3. 后端 —— FastAPI
+  # ────────────────────────────
+  backend:
+    build: ./backend
+    container_name: kecap-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # ── 数据库（Docker 下用 PostgreSQL）──
+      DATABASE_URL_OVERRIDE: "postgresql+asyncpg://kecap:kecap123@postgres:5432/kecap"
+      # ── Qdrant（Docker 下连接容器）──
+      QDRANT_URL: "http://qdrant:6333"
+      QDRANT_COLLECTION: "course_materials"
+      # ── LLM ──
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      # ── Embedding ──
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://api.siliconflow.cn/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
+      # ── 其他 ──
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      UPLOAD_DIR: "/app/uploads"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      qdrant:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ────────────────────────────
+  # 4. 前端 —— Next.js
+  # ────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
+    container_name: kecap-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+# ────────────────────────────
+# 持久化存储卷
+# ────────────────────────────
 volumes:
   qdrant_data:
   postgres_data:
+  uploads_data:

@@ -1,4 +1,8 @@
-"""向量数据库操作 —— Qdrant 本地文件模式（免 Docker）"""
+"""向量数据库操作 —— Qdrant
+
+本地开发：文件模式（免 Docker）
+Docker 部署：连接 Qdrant 容器
+"""
 
 import uuid
 from pathlib import Path
@@ -24,8 +28,13 @@ _embedding_client = None
 def _get_qdrant() -> QdrantClient:
     global _qdrant_client
     if _qdrant_client is None:
-        Path(settings.qdrant_path).mkdir(parents=True, exist_ok=True)
-        _qdrant_client = QdrantClient(path=settings.qdrant_path)
+        if settings.qdrant_url:
+            # Docker 模式：连接 Qdrant 容器
+            _qdrant_client = QdrantClient(url=settings.qdrant_url)
+        else:
+            # 本地模式：文件存储
+            Path(settings.qdrant_path).mkdir(parents=True, exist_ok=True)
+            _qdrant_client = QdrantClient(path=settings.qdrant_path)
     return _qdrant_client
 
 

@@ -34,3 +34,11 @@ backend/storage/*.db
 
 # Uploaded files
 backend/storage/uploads/
+backend/uploads/
+
+# PyInstaller build cache
+build/
+
+# Personal notes / competition docs
+*困难总结*
+*大赛*
