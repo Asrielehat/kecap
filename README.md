@@ -31,8 +31,8 @@
 
 ### 3. 获取 API Key
 
-| 服务 | 地址 | 费用 |
-|------|------|------|
+| 服务 | 地址 |
+|------|------|
 | DeepSeek（LLM） | https://platform.deepseek.com |
 | SiliconFlow（Embedding） | https://siliconflow.cn |
 
@@ -81,8 +81,8 @@
 
 ### 2. 注册 API Key
 
-| 服务 | 地址 | 费用 |
-|------|------|------|
+| 服务 | 地址 |
+|------|------|
 | DeepSeek（LLM） | https://platform.deepseek.com |
 | SiliconFlow（Embedding） | https://siliconflow.cn |
 
