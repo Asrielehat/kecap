@@ -32,7 +32,13 @@ interface ConversationItem {
   created_at: string;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+// EXE/Docker 同源部署时页面由 FastAPI 提供（端口 8000），直接用相对路径 /api；
+// 否则（开发模式 :3000 或独立前端）回退到环境变量 / 本地默认地址。
+// 注意：不要依赖构建期 NEXT_PUBLIC_API_URL=/api —— Git Bash 会把 /api 误转成 E:/Git/api。
+const API_BASE =
+  typeof window !== "undefined" && window.location.port === "8000"
+    ? "/api"
+    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 export default function Home() {
   const [courses, setCourses] = useState<Course[]>([]);

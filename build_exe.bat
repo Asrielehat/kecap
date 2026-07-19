@@ -11,7 +11,8 @@ cd /d "%~dp0"
 echo [1/3] 构建前端静态文件...
 cd frontend
 set NEXT_EXPORT=1
-set NEXT_PUBLIC_API_URL=/api
+:: 不再设置 NEXT_PUBLIC_API_URL：EXE 模式下前端自动用相对路径 /api
+:: （在 Git Bash 中设为 /api 会被 MSYS 误转成 E:/Git/api，导致前端请求全挂）
 call npx next build --webpack
 if %ERRORLEVEL% NEQ 0 (
     echo ❌ 前端构建失败！

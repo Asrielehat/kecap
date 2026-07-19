@@ -112,7 +112,12 @@ def open_browser():
     webbrowser.open("http://localhost:8000")
     print("[Kecap] 浏览器已打开: http://localhost:8000")
 
-threading.Thread(target=open_browser, daemon=True).start()
+
+def is_port_in_use(port: int = 8000) -> bool:
+    """检测端口是否已被占用（已有实例在运行）"""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(("127.0.0.1", port)) == 0
 
 
 # ═══════════════════════════════════════════
@@ -121,6 +126,18 @@ threading.Thread(target=open_browser, daemon=True).start()
 
 if __name__ == "__main__":
     import uvicorn
+
+    # 已有实例在运行时：不再启动第二个（会因 Qdrant 文件锁直接崩溃），
+    # 直接打开浏览器指向已运行的实例即可
+    if is_port_in_use(8000):
+        print("=" * 50)
+        print("  课答已经在运行中，无需重复启动")
+        print("  正在打开浏览器...")
+        print("=" * 50)
+        webbrowser.open("http://localhost:8000")
+        import time
+        time.sleep(3)  # 留几秒让用户看到提示，再自动关闭窗口
+        sys.exit(0)
 
     print("=" * 50)
     print("  课答 Kecap — RAG 增强 AI 学业辅导智能体")
@@ -132,5 +149,7 @@ if __name__ == "__main__":
     print("=" * 50)
     print("  关闭此窗口即可退出程序")
     print("=" * 50)
+
+    threading.Thread(target=open_browser, daemon=True).start()
 
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")

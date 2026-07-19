@@ -92,14 +92,16 @@ def smart_chunk(text: str, chunk_size: int = None, overlap: int = None) -> list[
     page_pattern = re.compile(r'\[PAGE:(\d+)\]\n')
     slide_pattern = re.compile(r'\[SLIDE:(\d+)\]\n')
 
-    # 统一用分段符标记
-    text = page_pattern.sub(lambda m: f"\n{{PAGE:{m.group(1)}}}\n", text)
-    text = slide_pattern.sub(lambda m: f"\n{{SLIDE:{m.group(1)}}}\n", text)
+    # 统一用分段符标记；标记前后都用双换行隔离，使其独占一段——
+    # 否则标记与正文粘在同一段，re.match 命中标记后 continue 会把正文一起丢弃
+    text = page_pattern.sub(lambda m: f"\n\n{{PAGE:{m.group(1)}}}\n\n", text)
+    text = slide_pattern.sub(lambda m: f"\n\n{{SLIDE:{m.group(1)}}}\n\n", text)
 
     paragraphs = text.split("\n\n")
     chunks = []
     current_chunk = ""
     current_page = 0
+    chunk_page = 0  # 当前 chunk 的起始页码（引用标注"第 X 页"用）
     chunk_index = 0
 
     for para in paragraphs:
@@ -123,17 +125,19 @@ def smart_chunk(text: str, chunk_size: int = None, overlap: int = None) -> list[
                 "id": str(uuid.uuid4()),
                 "content": current_chunk.strip(),
                 "chunk_index": chunk_index,
-                "page_number": current_page if current_page > 0 else None,
+                "page_number": chunk_page if chunk_page > 0 else None,
             })
             chunk_index += 1
             # 保留 overlap 部分
             overlap_text = current_chunk[-overlap:] if len(current_chunk) > overlap else current_chunk
             current_chunk = overlap_text + "\n\n" + para
+            chunk_page = current_page  # 新 chunk 以当前段落页码为起始
         else:
             if current_chunk:
                 current_chunk += "\n\n" + para
             else:
                 current_chunk = para
+                chunk_page = current_page  # 记录 chunk 起始页
 
     # 保存最后一个 chunk
     if current_chunk.strip():
@@ -141,7 +145,7 @@ def smart_chunk(text: str, chunk_size: int = None, overlap: int = None) -> list[
             "id": str(uuid.uuid4()),
             "content": current_chunk.strip(),
             "chunk_index": chunk_index,
-            "page_number": current_page if current_page > 0 else None,
+            "page_number": chunk_page if chunk_page > 0 else None,
         })
 
     return chunks
