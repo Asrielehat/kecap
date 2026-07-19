@@ -1,7 +1,5 @@
 # 📚 课答 —— RAG 增强的 AI 学业辅导智能体
 
-> 2026 年广东省"元智新潮"大学生智能体应用创新大赛 · 教育智能体赛道
-
 ## 项目简介
 
 学生上传课程资料（教材、课件、笔记），智能体基于 RAG 技术提供**精准、可溯源**的 AI 答疑与自适应练习。
@@ -20,13 +18,19 @@
 
 ## 🚀 快速使用（EXE 一键版）
 
-> **适合评委 / 非技术人员** —— 无需安装 Python、Node.js、Docker，下载即用。
+> **无需安装 Python、Node.js、Docker** —— 下载解压即用。
 
-### 1. 准备
+### 1. 下载
+
+👉 **[点击下载 课答 Kecap v1.0.0（Windows 64 位，65.5 MB）](https://github.com/Asrielehat/kecap/releases/download/v1.0.0/Kecap-v1.0.0-win64.zip)**
+
+或前往 [Releases 页面](https://github.com/Asrielehat/kecap/releases) 选择最新版本。
+
+### 2. 准备
 
 确保你的电脑能正常访问互联网（需要调用云端 AI API）。
 
-### 2. 获取 API Key
+### 3. 获取 API Key
 
 | 服务 | 地址 | 费用 |
 |------|------|------|
@@ -35,31 +39,32 @@
 
 注册后在对应平台创建 API Key，复制备用。
 
-### 3. 配置并启动
+### 4. 配置并启动
+
+解压下载的 zip，文件夹内容如下：
 
 ```
-dist/                    ← 把这个文件夹复制给别人
-├── 课答.exe             ← 双击启动
-├── .env                 ← 配置文件（API Key 写在这里）
-├── data/                ← 自动生成（数据库、向量索引）
-└── uploads/             ← 自动生成（上传的文件）
+课答Kecap/
+├── 课答.exe            ← 双击启动
+├── .env.example        ← 配置模板（复制一份改名为 .env）
+├── 使用说明.txt
+├── data/               ← 自动生成（数据库、向量索引）
+└── uploads/            ← 自动生成（上传的文件）
 ```
 
-**接收方操作步骤：**
+**操作步骤：**
 
-1. 将整个 `dist` 文件夹拷贝到任意位置
-2. 用记事本编辑 `dist/.env`，填入自己的 API Key：
+1. 解压 zip 到任意位置
+2. 把 `.env.example` 复制一份，重命名为 `.env`
+3. 用记事本编辑 `.env`，填入自己的 API Key：
    ```
    LLM_API_KEY=sk-你的deepseek-key
    EMBEDDING_API_KEY=sk-你的siliconflow-key
    ```
-3. 双击 `课答.exe`
-4. 等待控制台显示"前端页面: http://localhost:8000"
-5. 浏览器会自动打开，即可使用
+4. 双击 `课答.exe`
+5. 浏览器会自动打开 http://localhost:8000，即可使用
 
-> ⚠️ **注意**：分发时请删除 `.env` 中的个人 API Key，接收方需自行配置。`.env` 中只保留空模板即可。
-
-### 4. 关闭
+### 5. 关闭
 
 直接关闭控制台黑窗口即可。
 
