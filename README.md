@@ -1,3 +1,185 @@
+# 📚 Kecap — RAG-Powered AI Study Assistant
+
+**[English](#english) | [中文](#中文)**
+
+---
+
+<a id="english"></a>
+
+## Introduction
+
+Students upload course materials (textbooks, slides, notes), and the assistant provides **accurate, traceable** AI Q&A and adaptive practice based on RAG (Retrieval-Augmented Generation).
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Next.js 14 + Tailwind CSS |
+| Backend | Python FastAPI |
+| LLM | DeepSeek V3 API |
+| Embedding | SiliconFlow BGE-M3 |
+| Vector Database | Qdrant |
+| Database | PostgreSQL |
+| Voice TTS | GPT-SoVITS (optional) |
+
+## 🚀 Quick Start (Standalone EXE)
+
+### 1. Download
+
+👉 **[Download Kecap v1.0.0 (Windows 64-bit, 65.5 MB)](https://github.com/Asrielehat/kecap/releases/download/v1.0.0/Kecap-v1.0.0-win64.zip)**
+
+Or visit the [Releases page](https://github.com/Asrielehat/kecap/releases) for the latest version.
+
+### 2. Requirements
+
+An internet connection (cloud AI APIs are called at runtime).
+
+### 3. Get API Keys
+
+| Service | Website |
+|---------|---------|
+| DeepSeek (LLM) | https://platform.deepseek.com |
+| SiliconFlow (Embedding) | https://siliconflow.cn |
+
+Sign up on each platform, create an API key, and keep them handy.
+
+### 4. Configure & Run
+
+Unzip the archive. The folder contains:
+
+```
+课答Kecap/
+├── 课答.exe            ← Double-click to launch
+├── .env.example        ← Config template (copy and rename to .env)
+├── 使用说明.txt         ← Usage instructions
+├── data/               ← Auto-generated (database, vector index)
+└── uploads/            ← Auto-generated (uploaded files)
+```
+
+**Steps:**
+
+1. Unzip to any location
+2. Copy `.env.example` and rename the copy to `.env`
+3. Open `.env` in Notepad and fill in your API keys:
+   ```
+   LLM_API_KEY=sk-your-deepseek-key
+   EMBEDDING_API_KEY=sk-your-siliconflow-key
+   ```
+4. Double-click `课答.exe`
+5. Your browser opens http://localhost:8000 automatically — start using it
+
+### 5. Quit
+
+Just close the console window.
+
+---
+
+## Developer Setup (Full Environment)
+
+> For development, debugging, and Docker deployment.
+
+### 1. Prerequisites
+
+- Python ≥ 3.10
+- Node.js ≥ 18
+- Docker Desktop
+
+### 2. Register API Keys
+
+| Service | Website |
+|---------|---------|
+| DeepSeek (LLM) | https://platform.deepseek.com |
+| SiliconFlow (Embedding) | https://siliconflow.cn |
+
+### 3. Configure Environment Variables
+
+Edit `backend/.env` and fill in your API keys:
+
+```env
+LLM_API_KEY=sk-your-deepseek-key
+EMBEDDING_API_KEY=sk-your-siliconflow-key
+```
+
+### 4. Start Infrastructure
+
+```bash
+docker compose up -d
+```
+
+### 5. Start Backend
+
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+Visit http://localhost:8000/docs for the API documentation.
+
+### 6. Start Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Visit http://localhost:3000
+
+## Project Structure
+
+```
+kecap/
+├── docker-compose.yml        # Qdrant + PostgreSQL
+├── backend/
+│   ├── app/
+│   │   ├── main.py           # FastAPI entry point
+│   │   ├── core/
+│   │   │   ├── config.py     # Configuration management
+│   │   │   └── database.py   # Database connection
+│   │   ├── models/
+│   │   │   ├── db_models.py  # SQLAlchemy models
+│   │   │   └── schemas.py    # Pydantic request/response
+│   │   ├── api/
+│   │   │   ├── upload.py     # Document upload API
+│   │   │   ├── chat.py       # RAG Q&A API
+│   │   │   └── courses.py    # Course management API
+│   │   └── rag/
+│   │       ├── document_processor.py  # Document parsing + chunking
+│   │       ├── vector_store.py        # Qdrant vector store
+│   │       ├── retriever.py           # Hybrid retrieval + reranking
+│   │       └── generator.py           # LLM answer generation
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   └── .env
+└── frontend/
+    └── src/app/
+        └── page.tsx          # Main chat interface
+```
+
+## API Overview
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/courses/` | Create a course |
+| GET | `/api/courses/` | List courses |
+| POST | `/api/documents/upload` | Upload a document (auto parse + vectorize) |
+| POST | `/api/chat/ask` | RAG Q&A (returns answer + citations) |
+| POST | `/api/chat/ask/stream` | Streaming RAG Q&A (SSE) |
+
+## RAG Pipeline
+
+```
+User question → Query expansion → Vector retrieval (BM25 + semantic) → Top-10 recall
+→ Cross-encoder reranking → Top-3 → LLM answer generation
+→ Sentence-level citation annotation → Response
+```
+
+---
+---
+
+<a id="中文"></a>
+
 # 📚 课答 —— RAG 增强的 AI 学业辅导智能体
 
 ## 项目简介
