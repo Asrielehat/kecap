@@ -33,8 +33,8 @@
 
 | 服务 | 地址 | 费用 |
 |------|------|------|
-| DeepSeek（LLM） | https://platform.deepseek.com | 新用户送 500 万 token |
-| SiliconFlow（Embedding） | https://siliconflow.cn | 新用户送 2000 万 token |
+| DeepSeek（LLM） | https://platform.deepseek.com |
+| SiliconFlow（Embedding） | https://siliconflow.cn |
 
 注册后在对应平台创建 API Key，复制备用。
 
