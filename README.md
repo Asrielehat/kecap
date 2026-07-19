@@ -83,8 +83,8 @@
 
 | 服务 | 地址 | 费用 |
 |------|------|------|
-| DeepSeek（LLM） | https://platform.deepseek.com | ¥1/百万 token |
-| SiliconFlow（Embedding） | https://siliconflow.cn | 新用户送 2000 万 token |
+| DeepSeek（LLM） | https://platform.deepseek.com |
+| SiliconFlow（Embedding） | https://siliconflow.cn |
 
 ### 3. 配置环境变量
 
