@@ -32,6 +32,20 @@ interface ConversationItem {
   created_at: string;
 }
 
+interface FollowUpModalState {
+  id: string;
+  followUpId?: string; // 后端返回的 FollowUp 记录 ID，用于嵌套追问
+  selectedText: string;
+  contextParagraph: string;
+  messageId: string;
+  answer: string;
+  citations: Citation[];
+  loading: boolean;
+  x: number;
+  y: number;
+  zIndex: number;
+}
+
 // EXE/Docker 同源部署时页面由 FastAPI 提供（端口 8000），直接用相对路径 /api；
 // 否则（开发模式 :3000 或独立前端）回退到环境变量 / 本地默认地址。
 // 注意：不要依赖构建期 NEXT_PUBLIC_API_URL=/api —— Git Bash 会把 /api 误转成 E:/Git/api。
@@ -55,6 +69,11 @@ export default function Home() {
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [feedbackMap, setFeedbackMap] = useState<Record<number, string>>({});
+  const [followUpModals, setFollowUpModals] = useState<FollowUpModalState[]>([]);
+  const [selectionData, setSelectionData] = useState<{
+    text: string; paragraph: string; messageId: string; x: number; y: number;
+  } | null>(null);
+  const [topZIndex, setTopZIndex] = useState(200);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const dragCounter = useRef(0);
   const thinkingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -135,6 +154,7 @@ export default function Home() {
       setSelectedCourse(data.course_id);
       setMessages(
         data.messages.map((m: any) => ({
+          id: m.id,
           role: m.role,
           content: m.content,
           citations: m.citations,
@@ -267,6 +287,121 @@ export default function Home() {
       e.preventDefault();
       handleSend();
     }
+  }
+
+  // ── 追问答疑 ──
+
+  function handleMessageSelect(e: React.MouseEvent, msgIndex: number) {
+    // 延迟获取选中内容（mouseup 时 Selection 对象尚未就绪）
+    setTimeout(() => {
+      const sel = window.getSelection();
+      if (!sel || !sel.toString().trim()) {
+        setSelectionData(null);
+        return;
+      }
+      const text = sel.toString().trim();
+      if (text.length < 2 || text.length > 500) {
+        setSelectionData(null);
+        return;
+      }
+
+      const msg = messages[msgIndex];
+      if (msg.role !== "assistant") { setSelectionData(null); return; }
+
+      // 获取选中文字所在段落
+      const anchorNode = sel.anchorNode;
+      let paragraph = "";
+      if (anchorNode) {
+        const bubble = anchorNode.parentElement?.closest(".markdown-body");
+        if (bubble) {
+          paragraph = (bubble as HTMLElement).innerText?.substring(0, 1000) || "";
+        }
+      }
+      if (!paragraph) paragraph = text;
+
+      const messageId = (msg as any).id || "";
+
+      setSelectionData({ text, paragraph, messageId, x: e.clientX, y: e.clientY });
+    }, 10);
+  }
+
+  async function doFollowUp(
+    text: string, paragraph: string, messageId: string, parentFollowUpId?: string
+  ) {
+    if (!selectedCourse) return;
+    console.log("[追问] 开始:", { text, messageId, parentFollowUpId });
+
+    let id: string;
+    try { id = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()); }
+    catch { id = String(Date.now()) + "-" + Math.random().toString(36).slice(2, 10); }
+    const newZ = topZIndex + 1;
+    setTopZIndex(newZ);
+
+    setFollowUpModals((prev) => [
+      ...prev,
+      {
+        id, selectedText: text, contextParagraph: paragraph,
+        messageId, answer: "", citations: [], loading: true,
+        x: 180 + prev.length * 30, y: 120 + prev.length * 30, zIndex: newZ,
+      },
+    ]);
+
+    // 构建请求体：顶层追问传 message_id，嵌套追问传 parent_follow_up_id
+    const body: any = {
+      selected_text: text,
+      context_paragraph: paragraph,
+      course_id: selectedCourse,
+      conversation_id: conversationId || "",
+    };
+    if (parentFollowUpId) {
+      body.parent_follow_up_id = parentFollowUpId;
+    } else {
+      body.message_id = messageId;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/chat/follow-up`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      console.log("[追问] 响应状态:", res.status);
+      const rawText = await res.text();
+      console.log("[追问] 响应原文(前500):", rawText.substring(0, 500));
+      const data = JSON.parse(rawText);
+      console.log("[追问] answer 长度:", data.answer?.length, "citations:", data.citations?.length);
+      setFollowUpModals((prev) =>
+        prev.map((m) =>
+          m.id === id ? { ...m, followUpId: data.id, answer: data.answer || "(空)", citations: data.citations || [], loading: false } : m
+        )
+      );
+    } catch (err) {
+      console.error("追问请求失败:", err);
+      setFollowUpModals((prev) =>
+        prev.map((m) =>
+          m.id === id ? { ...m, answer: "请求失败，请检查后端服务是否启动。", loading: false } : m
+        )
+      );
+    }
+  }
+
+  async function handleFollowUp() {
+    if (!selectionData) return;
+    const { text, paragraph, messageId } = selectionData;
+    setSelectionData(null);
+    await doFollowUp(text, paragraph, messageId);
+  }
+
+  function closeFollowUpModal(id: string) {
+    setFollowUpModals((prev) => prev.filter((m) => m.id !== id));
+  }
+
+  function bringToFront(id: string) {
+    const newZ = topZIndex + 1;
+    setTopZIndex(newZ);
+    setFollowUpModals((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, zIndex: newZ } : m))
+    );
   }
 
   // ── 拖拽上传 ──
@@ -635,7 +770,10 @@ export default function Home() {
 
                 {msg.role === "assistant" && (
                   <div className="text-sm leading-relaxed">
-                    <div className="markdown-body">
+                    <div
+                      className="markdown-body"
+                      onMouseUp={(e) => handleMessageSelect(e, i)}
+                      style={{ userSelect: "text", cursor: "text" }}>
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         components={{
@@ -761,6 +899,28 @@ export default function Home() {
               </div>
             </div>
           )}
+          {selectionData && (
+            <div
+              className="fixed bg-white border border-blue-400 shadow-lg rounded-lg px-3 py-2 flex items-center gap-2 animate-[fadeIn_0.15s_ease-out]"
+              style={{ zIndex: topZIndex + 1, left: Math.min(selectionData.x, window.innerWidth - 120), top: selectionData.y + 20 }}
+            >
+              <span className="text-[11px] text-zinc-500 max-w-[200px] truncate">
+                追问: "{selectionData.text.slice(0, 30)}{selectionData.text.length > 30 ? "…" : ""}"
+              </span>
+              <button
+                onClick={(e) => { e.stopPropagation(); handleFollowUp(); }}
+                className="px-2.5 py-1 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors shrink-0"
+              >
+                追问
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setSelectionData(null); }}
+                className="text-zinc-300 hover:text-zinc-500 text-xs shrink-0"
+              >
+                ×
+              </button>
+            </div>
+          )}
           <div ref={chatEndRef} />
         </div>
 
@@ -793,6 +953,235 @@ export default function Home() {
           </p>
         </div>
       </main>
+
+      {/* ── 追问弹窗层（拖拽 + 多弹窗管理）── */}
+      {followUpModals.map((modal) => (
+        <DraggableModal
+          key={modal.id}
+          modal={modal}
+          topZIndex={topZIndex}
+          onClose={() => closeFollowUpModal(modal.id)}
+          onFocus={() => bringToFront(modal.id)}
+          onFollowUp={(text, paragraph, parentId) =>
+            doFollowUp(text, paragraph, "", parentId)
+          }
+        />
+      ))}
+    </div>
+  );
+}
+
+// ── 可拖拽追问弹窗子组件 ──
+function DraggableModal({
+  modal,
+  topZIndex,
+  onClose,
+  onFocus,
+  onFollowUp,
+}: {
+  modal: FollowUpModalState;
+  topZIndex: number;
+  onClose: () => void;
+  onFocus: () => void;
+  onFollowUp: (text: string, paragraph: string, parentFollowUpId: string) => void;
+}) {
+  const [pos, setPos] = useState({ x: modal.x, y: modal.y });
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef({ startX: 0, startY: 0, startLeft: 0, startTop: 0 });
+  const [innerSelection, setInnerSelection] = useState<{
+    text: string; paragraph: string; x: number; y: number;
+  } | null>(null);
+
+  // 窗口大小变化时保持弹窗在可视范围内
+  useEffect(() => {
+    setPos({ x: modal.x, y: modal.y });
+  }, [modal.x, modal.y]);
+
+  // 弹窗内文字选中检测
+  function handleInnerMouseUp(e: React.MouseEvent) {
+    setTimeout(() => {
+      const sel = window.getSelection();
+      if (!sel || !sel.toString().trim()) {
+        setInnerSelection(null);
+        return;
+      }
+      const text = sel.toString().trim();
+      if (text.length < 2 || text.length > 500) {
+        setInnerSelection(null);
+        return;
+      }
+      // 获取所在段落的文本
+      const anchorNode = sel.anchorNode;
+      let paragraph = text;
+      if (anchorNode) {
+        const parent = anchorNode.parentElement;
+        if (parent) {
+          paragraph = (parent.textContent || text).substring(0, 800);
+        }
+      }
+      setInnerSelection({ text, paragraph, x: e.clientX, y: e.clientY });
+    }, 10);
+  }
+
+  function handleInnerFollowUp() {
+    if (!innerSelection) return;
+    onFollowUp(innerSelection.text, innerSelection.paragraph, modal.followUpId || modal.id);
+    setInnerSelection(null);
+  }
+
+  function handleMouseDown(e: React.MouseEvent) {
+    setDragging(true);
+    onFocus();
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startLeft: pos.x,
+      startTop: pos.y,
+    };
+    e.preventDefault();
+  }
+
+  useEffect(() => {
+    if (!dragging) return;
+    function handleMouseMove(e: MouseEvent) {
+      const dx = e.clientX - dragRef.current.startX;
+      const dy = e.clientY - dragRef.current.startY;
+      setPos({
+        x: Math.max(0, Math.min(window.innerWidth - 420, dragRef.current.startLeft + dx)),
+        y: Math.max(0, Math.min(window.innerHeight - 100, dragRef.current.startTop + dy)),
+      });
+    }
+    function handleMouseUp() { setDragging(false); }
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [dragging]);
+
+  const width = 400;
+  const maxHeight = 480;
+
+  return (
+    <div
+      className="fixed bg-white rounded-xl shadow-2xl border border-zinc-300 flex flex-col overflow-hidden"
+      style={{
+        left: pos.x,
+        top: pos.y,
+        width,
+        maxHeight,
+        zIndex: modal.zIndex,
+      }}
+      onMouseDown={onFocus}
+    >
+      {/* 标题栏（拖拽把手） */}
+      <div
+        className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-zinc-200 cursor-move select-none shrink-0"
+        onMouseDown={handleMouseDown}
+      >
+        <span className="text-sm">🔍</span>
+        <span className="text-xs font-medium text-zinc-700 truncate flex-1">
+          追问: {modal.selectedText.slice(0, 40)}{modal.selectedText.length > 40 ? "…" : ""}
+        </span>
+        <button
+          onClick={(e) => { e.stopPropagation(); onClose(); }}
+          className="text-zinc-400 hover:text-zinc-600 hover:bg-zinc-200 rounded-full w-5 h-5 flex items-center justify-center text-xs shrink-0 transition-colors"
+        >
+          ×
+        </button>
+      </div>
+
+      {/* 正文区 */}
+      <div className="flex-1 overflow-auto px-4 py-3">
+        {modal.loading ? (
+          <div className="flex items-center gap-2.5 py-6">
+            <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin shrink-0" />
+            <span className="text-xs text-zinc-400">正在从课件中检索解释…</span>
+          </div>
+        ) : (
+          <div
+            className="text-sm leading-relaxed markdown-body"
+            onMouseUp={handleInnerMouseUp}
+            style={{ userSelect: "text", cursor: "text" }}>
+            {/* 弹窗内追问浮动按钮 */}
+            {innerSelection && (
+              <div
+                className="fixed bg-white border border-purple-400 shadow-lg rounded-lg px-3 py-2 flex items-center gap-2"
+                style={{ zIndex: topZIndex + 2, left: Math.min(innerSelection.x, window.innerWidth - 120), top: innerSelection.y + 20 }}
+              >
+                <span className="text-[11px] text-zinc-500 max-w-[200px] truncate">
+                  追问: "{innerSelection.text.slice(0, 25)}{innerSelection.text.length > 25 ? "…" : ""}"
+                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleInnerFollowUp(); }}
+                  className="px-2.5 py-1 text-xs bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors shrink-0"
+                >
+                  追问
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setInnerSelection(null); }}
+                  className="text-zinc-300 hover:text-zinc-500 text-xs shrink-0"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                h1: ({ children }) => <h1 className="text-sm font-semibold text-zinc-800 mt-2 mb-1">{children}</h1>,
+                h2: ({ children }) => <h2 className="text-xs font-semibold text-zinc-800 mt-2 mb-1">{children}</h2>,
+                h3: ({ children }) => <h3 className="text-xs font-medium text-zinc-700 mt-1.5 mb-0.5">{children}</h3>,
+                p: ({ children }) => <p className="text-xs text-zinc-700 my-1.5 leading-relaxed">{children}</p>,
+                strong: ({ children }) => <strong className="font-semibold text-zinc-800">{children}</strong>,
+                ul: ({ children }) => <ul className="list-disc list-inside my-1 space-y-0.5 text-xs">{children}</ul>,
+                ol: ({ children }) => <ol className="list-decimal list-inside my-1 space-y-0.5 text-xs">{children}</ol>,
+                li: ({ children }) => <li className="text-xs text-zinc-700">{children}</li>,
+                code: ({ className, children, ...props }: any) => {
+                  const isInline = !className;
+                  return isInline
+                    ? <code className="bg-zinc-200 text-zinc-800 px-1 py-0.5 rounded text-[11px] font-mono">{children}</code>
+                    : <code className="block bg-zinc-800 text-zinc-100 text-[11px] p-2.5 rounded-lg my-1.5 overflow-x-auto font-mono whitespace-pre-wrap">{children}</code>;
+                },
+                pre: ({ children }) => <>{children}</>,
+                a: ({ href, children }) => <a href={href} target="_blank" rel="noopener" className="text-blue-600 underline">{children}</a>,
+                blockquote: ({ children }) => <blockquote className="border-l-3 border-blue-400 bg-blue-50 px-2.5 py-1 my-1.5 text-xs text-zinc-600 rounded-r">{children}</blockquote>,
+                hr: () => <hr className="border-zinc-200 my-2" />,
+                em: ({ children }) => <em className="italic text-zinc-600">{children}</em>,
+                table: ({ children }) => <div className="overflow-x-auto my-1.5"><table className="w-full text-[11px] border-collapse">{children}</table></div>,
+                th: ({ children }) => <th className="border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 text-left font-medium text-zinc-700">{children}</th>,
+                td: ({ children }) => <td className="border border-zinc-300 px-1.5 py-0.5 text-zinc-600">{children}</td>,
+              }}
+            >
+              {modal.answer}
+            </ReactMarkdown>
+
+            {modal.citations && modal.citations.length > 0 && (
+              <details className="mt-3 pt-2 border-t border-zinc-200">
+                <summary className="text-[11px] text-zinc-400 cursor-pointer hover:text-zinc-600">
+                  参考来源（{modal.citations.length} 条）
+                </summary>
+                <div className="mt-1.5 space-y-1.5">
+                  {modal.citations.map((cit, j) => (
+                    <div key={j} className="bg-zinc-50 rounded-md p-2 border border-zinc-100">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-[11px] font-medium text-blue-600">
+                          {cit.document_name}{cit.page ? ` · 第${cit.page}页` : ""}
+                        </span>
+                        <span className="text-[10px] text-zinc-400">
+                          {(cit.score * 100).toFixed(0)}%
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-zinc-500 line-clamp-2">{cit.text}</p>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

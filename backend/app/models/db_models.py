@@ -79,3 +79,18 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+
+
+class FollowUp(Base):
+    """追问记录 —— 上下文隔离，不写入主对话历史。支持嵌套追问链"""
+    __tablename__ = "follow_ups"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    message_id: Mapped[str] = mapped_column(String(36), ForeignKey("messages.id"), nullable=True)
+    parent_follow_up_id: Mapped[str] = mapped_column(String(36), ForeignKey("follow_ups.id"), nullable=True)
+    course_id: Mapped[str] = mapped_column(String(36), ForeignKey("courses.id"), nullable=False)
+    conversation_id: Mapped[str] = mapped_column(String(36), ForeignKey("conversations.id"), nullable=False)
+    selected_text: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    citations: Mapped[dict] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

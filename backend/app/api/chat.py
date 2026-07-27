@@ -7,10 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.database import get_db
-from app.models.db_models import Conversation, Message, Document, gen_uuid
-from app.models.schemas import ChatRequest, ChatResponse, Citation
-from app.rag.retriever import retrieve_with_rerank
-from app.rag.generator import generate_answer, generate_answer_stream
+from app.models.db_models import Conversation, Message, Document, FollowUp, gen_uuid
+from app.models.schemas import ChatRequest, ChatResponse, Citation, FollowUpRequest, FollowUpResponse
+from app.rag.retriever import retrieve_with_rerank, retrieve_follow_up
+from app.rag.generator import generate_answer, generate_answer_stream, generate_follow_up
 
 router = APIRouter(prefix="/api/chat", tags=["智能答疑"])
 
@@ -111,6 +111,84 @@ async def ask(request: ChatRequest, db: AsyncSession = Depends(get_db)):
         conversation_id=conversation.id,
         assistant_message_id=assistant_msg.id,
         confidence=result["confidence"],
+    )
+
+
+@router.post("/follow-up", response_model=FollowUpResponse)
+async def ask_follow_up(request: FollowUpRequest, db: AsyncSession = Depends(get_db)):
+    """
+    追问答疑 —— 上下文隔离的术语解释（支持嵌套追问链）
+
+    顶层追问: message_id 指向主对话消息
+    嵌套追问: parent_follow_up_id 指向父追问记录（追问弹窗里的追问）
+    """
+    # 校验：至少需要一个父引用
+    if not request.message_id and not request.parent_follow_up_id:
+        raise HTTPException(status_code=400, detail="message_id 或 parent_follow_up_id 至少需要一个")
+
+    # 校验父引用存在
+    if request.message_id:
+        msg_result = await db.execute(select(Message).where(Message.id == request.message_id))
+        if not msg_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="消息不存在")
+    if request.parent_follow_up_id:
+        fu_result = await db.execute(select(FollowUp).where(FollowUp.id == request.parent_follow_up_id))
+        if not fu_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="父追问不存在")
+
+    # 获取课程文档名映射
+    docs_result = await db.execute(
+        select(Document).where(Document.course_id == request.course_id)
+    )
+    docs = {d.id: d.filename for d in docs_result.scalars().all()}
+
+    # 锚点检索
+    retrieved_docs = retrieve_follow_up(
+        request.selected_text,
+        request.context_paragraph,
+        request.course_id,
+    )
+    for doc in retrieved_docs:
+        doc["document_name"] = docs.get(doc["document_id"], "未知文档")
+
+    # 生成追问回答（上下文隔离，不读主对话历史）
+    result = generate_follow_up(
+        request.selected_text,
+        request.context_paragraph,
+        retrieved_docs,
+    )
+
+    # 写入 follow_ups 表（不写入 messages）
+    fu = FollowUp(
+        id=gen_uuid(),
+        message_id=request.message_id if request.message_id else None,
+        parent_follow_up_id=request.parent_follow_up_id if request.parent_follow_up_id else None,
+        course_id=request.course_id,
+        conversation_id=request.conversation_id,
+        selected_text=request.selected_text,
+        answer=result["answer"],
+        citations=result["citations"],
+    )
+    db.add(fu)
+    await db.flush()
+
+    citations = [
+        Citation(
+            text=c["text"],
+            document_name=c["document_name"],
+            page=c.get("page"),
+            chunk_id=c["chunk_id"],
+            score=c["score"],
+        )
+        for c in result["citations"]
+    ]
+
+    return FollowUpResponse(
+        id=fu.id,
+        answer=result["answer"],
+        citations=citations,
+        message_id=request.message_id if request.message_id else None,
+        parent_follow_up_id=request.parent_follow_up_id if request.parent_follow_up_id else None,
     )
 
 

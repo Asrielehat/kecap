@@ -135,6 +135,102 @@ def generate_answer(
     }
 
 
+# ── 追问专用 System Prompt（四段式：定义→联系原文→举例→关联）──
+FOLLOW_UP_PROMPT = """你是一个耐心的学业辅导老师。学生正在阅读 AI 的回答时，对其中的一个术语或表述产生了疑问，选中了一段文字来向你追问。
+
+## 你的任务
+
+用尽可能通俗易懂的方式解释学生选中的术语。按以下四段结构组织回答：
+
+**【定义】** 先用一句话直接解释这个术语是什么。不要兜圈子。
+
+**【联系原文】** 说明这个术语在原文语境中为什么出现、起什么作用。
+
+**【举例】** 给一个具体、简单的例子。越具体越好，让学生看完就能自己复述。
+
+**【补充】** 如果课件里还有相关概念，简要提一句，供学生进一步了解。
+
+## 原则
+
+- 假设学生对当前术语是完全陌生的，从零开始解释
+- 优先基于参考资料回答，参考资料的引用标注 [1]、[2]
+- 如果参考资料中没有相关内容，用自己的知识回答，但在末尾注明「注：以上解释来自通用知识，课件中未直接涉及此术语」
+- 答案控制在 500 字以内，精炼但完整
+- 回答结尾列出「参考来源」清单（如有）"""
+
+
+def generate_follow_up(
+    selected_text: str,
+    context_paragraph: str,
+    retrieved_docs: list[dict],
+) -> dict:
+    """
+    追问答案生成 —— 上下文隔离，不读取主对话历史
+
+    参数:
+        selected_text: 用户选中的文字
+        context_paragraph: 选中文字所在的完整段落
+        retrieved_docs: 锚点检索返回的文档片段列表
+
+    返回: {answer, citations}
+    """
+    # 构建带检索上下文的用户消息
+    context_parts = []
+    for i, doc in enumerate(retrieved_docs, start=1):
+        source = doc.get("document_name", "未知文档")
+        page = doc.get("page_number", "")
+        page_str = f"，第{page}页" if page else ""
+        context_parts.append(
+            f"[{i}]【来源: {source}{page_str}】\n{doc['content']}"
+        )
+
+    context = "\n\n---\n\n".join(context_parts) if context_parts else "（课件中未找到相关内容）"
+
+    user_message = f"""## 参考资料
+
+{context}
+
+---
+
+## 学生选中的文字
+
+"{selected_text}"
+
+## 选中文字所在的原文语境
+
+{context_paragraph}
+
+---
+
+请按四段式（定义 → 联系原文 → 举例 → 补充）解释以上术语。"""
+
+    messages = [
+        {"role": "system", "content": FOLLOW_UP_PROMPT},
+        {"role": "user", "content": user_message},
+    ]
+
+    response = llm_client.chat.completions.create(
+        model=settings.llm_model,
+        messages=messages,
+        temperature=0.15,      # 低温度：定义解释追求准确而非创意
+        max_tokens=800,         # 追问精炼，500 字以内
+    )
+
+    answer = response.choices[0].message.content
+
+    citations = []
+    for i, doc in enumerate(retrieved_docs, start=1):
+        citations.append({
+            "text": doc["content"][:200] + ("..." if len(doc["content"]) > 200 else ""),
+            "document_name": doc.get("document_name", "未知文档"),
+            "page": doc.get("page_number"),
+            "chunk_id": doc.get("chunk_id", ""),
+            "score": doc.get("score", 0),
+        })
+
+    return {"answer": answer, "citations": citations}
+
+
 def generate_answer_stream(
     question: str,
     retrieved_docs: list[dict],

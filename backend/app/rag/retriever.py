@@ -129,6 +129,49 @@ def expand_query(query: str) -> list[str]:
     return queries[:3]  # 最多 3 个检索子句
 
 
+def retrieve_follow_up(
+    selected_text: str,
+    context_paragraph: str,
+    course_id: str,
+) -> list[dict]:
+    """
+    追问锚点检索 —— 多 Query 并行 + 合并去重
+
+    针对用户选中的文本，构建 3 个检索角度：
+      1. 精准匹配选中文本
+      2. 选中文本 + 原文上下文（扩展覆盖）
+      3. 选中文本 + "的定义和解释"（概念导向）
+
+    返回 Top-5（比主对话 Top-3 多，追问需要更广覆盖）
+    """
+    # 构建多角度 Query
+    queries = [
+        selected_text,
+        selected_text + "\n\n" + context_paragraph[:200],
+        selected_text + "的定义和解释",
+    ]
+
+    # 去重（因为 3 个 query 可能返回相同结果）
+    seen = set()
+    unique_queries = []
+    for q in queries:
+        if q not in seen:
+            seen.add(q)
+            unique_queries.append(q)
+
+    # 并行检索 + 按 chunk_id 合并
+    all_results = {}
+    for q in unique_queries:
+        results = hybrid_search(q, course_id, top_k=10, score_threshold=0.3)
+        for r in results:
+            cid = r.get("chunk_id", r.get("id"))
+            if cid not in all_results or r["score"] > all_results[cid]["score"]:
+                all_results[cid] = r
+
+    documents = sorted(all_results.values(), key=lambda d: d["score"], reverse=True)
+    return documents[:5]
+
+
 def retrieve_with_rerank(
     query: str,
     course_id: str,

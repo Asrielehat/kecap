@@ -106,7 +106,7 @@ EMBEDDING_API_KEY=sk-your-siliconflow-key
 docker compose up -d
 ```
 
-### 5. Start Backend
+### 5. Start Backend (API only)
 
 ```bash
 cd backend
@@ -116,7 +116,23 @@ uvicorn app.main:app --reload --port 8000
 
 Visit http://localhost:8000/docs for the API documentation.
 
-### 6. Start Frontend
+### 6. Start Full-Stack (API + Frontend)
+
+```bash
+cd backend
+pip install -r requirements.txt
+python app/main_exe.py
+```
+
+This serves both the API and the frontend at http://localhost:8000. Make sure to build the frontend first:
+
+```bash
+cd frontend
+npm install
+NEXT_EXPORT=1 npm run build
+```
+
+### 7. Start Frontend (Dev Mode)
 
 ```bash
 cd frontend
@@ -134,6 +150,7 @@ kecap/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py           # FastAPI entry point
+│   │   ├── main_exe.py       # EXE entry point (serves API + frontend static files)
 │   │   ├── core/
 │   │   │   ├── config.py     # Configuration management
 │   │   │   └── database.py   # Database connection
@@ -142,8 +159,10 @@ kecap/
 │   │   │   └── schemas.py    # Pydantic request/response
 │   │   ├── api/
 │   │   │   ├── upload.py     # Document upload API
-│   │   │   ├── chat.py       # RAG Q&A API
-│   │   │   └── courses.py    # Course management API
+│   │   │   ├── chat.py       # RAG Q&A + Follow-up API
+│   │   │   ├── courses.py    # Course management API
+│   │   │   ├── conversations.py  # Conversation history API
+│   │   │   └── feedback.py   # Message feedback API
 │   │   └── rag/
 │   │       ├── document_processor.py  # Document parsing + chunking
 │   │       ├── vector_store.py        # Qdrant vector store
@@ -157,6 +176,20 @@ kecap/
         └── page.tsx          # Main chat interface
 ```
 
+## Features
+
+### 💬 RAG Q&A
+Ask questions about your course materials. The system retrieves relevant chunks, reranks them, and generates answers with inline citations.
+
+### 🔍 Follow-up (Context-Isolated)
+Select any text in an answer to ask a follow-up question in a draggable modal. Follow-ups are **context-isolated** — they don't pollute the main conversation history. Supports **nested follow-up chains** (ask follow-ups within follow-ups).
+
+### 📚 Document Management
+Upload PDF, PPT, DOCX, and MD files. Documents are auto-parsed, chunked, and vectorized for retrieval.
+
+### 📝 Conversation History
+All Q&A sessions are saved. Switch between conversations in the sidebar.
+
 ## API Overview
 
 | Method | Path | Description |
@@ -166,6 +199,10 @@ kecap/
 | POST | `/api/documents/upload` | Upload a document (auto parse + vectorize) |
 | POST | `/api/chat/ask` | RAG Q&A (returns answer + citations) |
 | POST | `/api/chat/ask/stream` | Streaming RAG Q&A (SSE) |
+| POST | `/api/chat/follow-up` | Context-isolated follow-up Q&A (supports nesting) |
+| GET | `/api/conversations/` | List conversations |
+| GET | `/api/conversations/{id}` | Get conversation messages |
+| POST | `/api/feedback/` | Submit message feedback |
 
 ## RAG Pipeline
 
@@ -173,6 +210,9 @@ kecap/
 User question → Query expansion → Vector retrieval (BM25 + semantic) → Top-10 recall
 → Cross-encoder reranking → Top-3 → LLM answer generation
 → Sentence-level citation annotation → Response
+
+Follow-up: Selected text + context paragraph → Anchor retrieval → LLM explanation
+→ Saved to follow_ups table (isolated from main conversation)
 ```
 
 ---
@@ -283,7 +323,7 @@ EMBEDDING_API_KEY=sk-your-siliconflow-key
 docker compose up -d
 ```
 
-### 5. 启动后端
+### 5. 启动后端（仅 API）
 
 ```bash
 cd backend
@@ -293,7 +333,23 @@ uvicorn app.main:app --reload --port 8000
 
 访问 http://localhost:8000/docs 查看 API 文档。
 
-### 6. 启动前端
+### 6. 启动一体化服务（API + 前端）
+
+```bash
+cd backend
+pip install -r requirements.txt
+python app/main_exe.py
+```
+
+同时提供 API 和前端页面，访问 http://localhost:8000。需先构建前端：
+
+```bash
+cd frontend
+npm install
+NEXT_EXPORT=1 npm run build
+```
+
+### 7. 启动前端（开发模式）
 
 ```bash
 cd frontend
@@ -311,6 +367,7 @@ kecap/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py           # FastAPI 入口
+│   │   ├── main_exe.py       # EXE 入口（API + 前端静态文件一体化）
 │   │   ├── core/
 │   │   │   ├── config.py     # 配置管理
 │   │   │   └── database.py   # 数据库连接
@@ -319,8 +376,10 @@ kecap/
 │   │   │   └── schemas.py    # Pydantic 请求/响应
 │   │   ├── api/
 │   │   │   ├── upload.py     # 文档上传 API
-│   │   │   ├── chat.py       # RAG 答疑 API
-│   │   │   └── courses.py    # 课程管理 API
+│   │   │   ├── chat.py       # RAG 答疑 + 追问 API
+│   │   │   ├── courses.py    # 课程管理 API
+│   │   │   ├── conversations.py  # 对话历史 API
+│   │   │   └── feedback.py   # 消息反馈 API
 │   │   └── rag/
 │   │       ├── document_processor.py  # 文档解析 + 分块
 │   │       ├── vector_store.py        # Qdrant 向量存储
@@ -334,6 +393,20 @@ kecap/
         └── page.tsx          # 主聊天界面
 ```
 
+## 功能介绍
+
+### 💬 RAG 答疑
+基于课程资料提问，系统检索相关片段、重排序后生成带溯源引用的答案。
+
+### 🔍 追问（上下文隔离）
+在回答中选中任意文字即可弹出拖拽式追问窗口。追问**上下文隔离**，不会污染主对话历史。支持**嵌套追问链**（追问弹窗内继续追问）。
+
+### 📚 文档管理
+支持上传 PDF、PPT、DOCX、MD 文件，自动解析、分块、向量化。
+
+### 📝 对话历史
+所有问答自动保存，可在侧栏切换历史对话。
+
 ## API 概览
 
 | 方法 | 路径 | 说明 |
@@ -343,6 +416,10 @@ kecap/
 | POST | `/api/documents/upload` | 上传文档（自动解析+向量化） |
 | POST | `/api/chat/ask` | RAG 答疑（返回答案+引文） |
 | POST | `/api/chat/ask/stream` | 流式 RAG 答疑（SSE） |
+| POST | `/api/chat/follow-up` | 上下文隔离追问（支持嵌套） |
+| GET | `/api/conversations/` | 对话列表 |
+| GET | `/api/conversations/{id}` | 获取对话消息 |
+| POST | `/api/feedback/` | 提交消息反馈 |
 
 ## RAG 链路
 
@@ -350,4 +427,7 @@ kecap/
 用户提问 → Query扩展 → 向量检索(BM25+语义) → 召回Top-10
 → Cross-encoder Reranker 精排 → Top-3 → LLM生成答案
 → 逐句标注引用来源 → 返回给用户
+
+追问: 选中文字 + 上下文段落 → 锚点检索 → LLM解释
+→ 存入 follow_ups 表（与主对话隔离）
 ```

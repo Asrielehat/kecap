@@ -22,8 +22,8 @@ if getattr(sys, "frozen", False):
     FRONTEND_DIR = Path(sys._MEIPASS) / "frontend"
 else:
     # 开发环境直接运行 python main_exe.py
-    BASE_DIR = Path(__file__).resolve().parent.parent.parent
-    FRONTEND_DIR = BASE_DIR.parent / "frontend" / "out"
+    BASE_DIR = Path(__file__).resolve().parent.parent  # = backend/
+    FRONTEND_DIR = BASE_DIR.parent / "frontend" / "out"  # = kecap/frontend/out
 
 # 加载 .env 文件（从 EXE 同级目录）
 env_file = BASE_DIR / ".env"

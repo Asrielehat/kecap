@@ -50,3 +50,21 @@ class CourseResponse(BaseModel):
     document_count: int
     chunk_count: int
     created_at: datetime
+
+
+class FollowUpRequest(BaseModel):
+    """追问请求 —— 上下文隔离，不影响主对话。支持嵌套追问链"""
+    selected_text: str = Field(..., min_length=1, max_length=800, description="用户选中的文字")
+    context_paragraph: str = Field(..., min_length=1, max_length=2000, description="选中文字所在的段落")
+    message_id: Optional[str] = Field(None, description="主对话中被追问的消息 ID（顶层追问）")
+    parent_follow_up_id: Optional[str] = Field(None, description="嵌套追问：父追问记录 ID（追问弹窗里的追问）")
+    course_id: str = Field(..., description="课程 ID")
+    conversation_id: str = Field(..., description="主会话 ID")
+
+
+class FollowUpResponse(BaseModel):
+    id: str
+    answer: str
+    citations: list[Citation] = []
+    message_id: Optional[str] = None
+    parent_follow_up_id: Optional[str] = None
