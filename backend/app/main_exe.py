@@ -120,6 +120,32 @@ def is_port_in_use(port: int = 8000) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+def check_server_health(port: int = 8000, timeout: float = 3.0) -> bool:
+    """检查已运行的实例是否健康响应"""
+    import urllib.request
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/health")
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        return resp.status == 200
+    except Exception:
+        return False
+
+
+def find_process_on_port(port: int = 8000) -> str | None:
+    """查找占用指定端口的进程 PID（Windows）"""
+    import subprocess
+    try:
+        result = subprocess.run(
+            f'netstat -ano | findstr ":{port}.*LISTENING"',
+            shell=True, capture_output=True, text=True, timeout=5,
+        )
+        if result.stdout.strip():
+            return result.stdout.strip().split()[-1]
+    except Exception:
+        pass
+    return None
+
+
 # ═══════════════════════════════════════════
 # 启动服务
 # ═══════════════════════════════════════════
@@ -127,17 +153,34 @@ def is_port_in_use(port: int = 8000) -> bool:
 if __name__ == "__main__":
     import uvicorn
 
-    # 已有实例在运行时：不再启动第二个（会因 Qdrant 文件锁直接崩溃），
-    # 直接打开浏览器指向已运行的实例即可
+    # 已有实例在运行时：先检查是否健康响应，防止连接到已卡死的旧实例
     if is_port_in_use(8000):
-        print("=" * 50)
-        print("  课答已经在运行中，无需重复启动")
-        print("  正在打开浏览器...")
-        print("=" * 50)
-        webbrowser.open("http://localhost:8000")
-        import time
-        time.sleep(3)  # 留几秒让用户看到提示，再自动关闭窗口
-        sys.exit(0)
+        if check_server_health():
+            # 旧实例正常运行，直接打开浏览器
+            print("=" * 50)
+            print("  课答已经在运行中")
+            print("  正在打开浏览器...")
+            print("=" * 50)
+            webbrowser.open("http://localhost:8000")
+            import time
+            time.sleep(3)
+            sys.exit(0)
+        else:
+            # 端口被占用但服务无响应 → 残留僵尸进程
+            print("=" * 60)
+            print("  !! 端口 8000 被占用但服务无响应！")
+            print("     可能是上次异常退出残留的进程")
+            pid = find_process_on_port(8000)
+            if pid:
+                print(f"     占用进程 PID: {pid}")
+                print(f"     请运行: taskkill /PID {pid} /F")
+            else:
+                print("     请重启电脑或在任务管理器中结束 Python 进程")
+            print("     结束后重新双击课答.exe 即可")
+            print("=" * 60)
+            import time
+            time.sleep(30)
+            sys.exit(1)
 
     print("=" * 50)
     print("  课答 Kecap — RAG 增强 AI 学业辅导智能体")

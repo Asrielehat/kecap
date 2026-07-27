@@ -26,7 +26,7 @@ Students upload course materials (textbooks, slides, notes), and the assistant p
 
 ### 1. Download
 
-👉 **[Download Kecap v1.1.0 (Windows 64-bit, 68.7 MB)](https://github.com/Asrielehat/kecap/releases/download/v1.1.0/Kecap-v1.1.0-win64.zip)**
+👉 **[Download Kecap v1.1.1 (Windows 64-bit, 68.7 MB)](https://github.com/Asrielehat/kecap/releases/download/v1.1.1/Kecap-v1.1.1-win64.zip)**
 
 Or visit the [Releases page](https://github.com/Asrielehat/kecap/releases) for the latest version.
 
@@ -243,7 +243,7 @@ Follow-up: Selected text + context paragraph → Anchor retrieval → LLM explan
 
 ### 1. 下载
 
-👉 **[点击下载 课答 Kecap v1.1.0（Windows 64 位，68.7 MB）](https://github.com/Asrielehat/kecap/releases/download/v1.1.0/Kecap-v1.1.0-win64.zip)**
+👉 **[点击下载 课答 Kecap v1.1.1（Windows 64 位，68.7 MB）](https://github.com/Asrielehat/kecap/releases/download/v1.1.1/Kecap-v1.1.1-win64.zip)**
 
 或前往 [Releases 页面](https://github.com/Asrielehat/kecap/releases) 选择最新版本。
 
