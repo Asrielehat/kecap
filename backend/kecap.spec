@@ -6,11 +6,16 @@ from pathlib import Path
 
 # 前端静态文件路径（SPECPATH 是 PyInstaller 提供的 spec 文件所在目录）
 frontend_out = Path(SPECPATH).parent / "frontend" / "out"
+# 内置技能目录
+skills_dir = Path(SPECPATH).parent / "skills"
 
 datas = []
 if frontend_out.exists():
     # 将前端构建产物打包进 EXE
     datas.append((str(frontend_out), "frontend"))
+if skills_dir.exists():
+    # 将内置技能打进 EXE
+    datas.append((str(skills_dir), "skills"))
 
 a = Analysis(
     ["app/main_exe.py"],

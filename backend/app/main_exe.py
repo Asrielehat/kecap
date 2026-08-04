@@ -20,10 +20,13 @@ if getattr(sys, "frozen", False):
     BASE_DIR = Path(sys.executable).parent
     # 前端静态文件打包在 sys._MEIPASS 中
     FRONTEND_DIR = Path(sys._MEIPASS) / "frontend"
+    # 内置技能同样打包在 sys._MEIPASS 中（只读资源）
+    SKILLS_DIR = Path(sys._MEIPASS) / "skills"
 else:
     # 开发环境直接运行 python main_exe.py
     BASE_DIR = Path(__file__).resolve().parent.parent  # = backend/
     FRONTEND_DIR = BASE_DIR.parent / "frontend" / "out"  # = kecap/frontend/out
+    SKILLS_DIR = BASE_DIR.parent / "skills"  # = kecap/skills
 
 # 加载 .env 文件（从 EXE 同级目录）
 env_file = BASE_DIR / ".env"
@@ -44,6 +47,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("SQLITE_PATH", str(DATA_DIR / "kecap.db"))
 os.environ.setdefault("QDRANT_PATH", str(DATA_DIR / "qdrant"))
 os.environ.setdefault("UPLOAD_DIR", str(UPLOAD_DIR))
+os.environ.setdefault("SKILLS_DIR", str(SKILLS_DIR))
 
 
 # ═══════════════════════════════════════════

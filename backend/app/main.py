@@ -1,5 +1,16 @@
 """课答 —— RAG 增强 AI 学业辅导智能体 —— FastAPI 主入口"""
 
+import sys
+
+# Windows 控制台默认 GBK 编码，AI 回答含 emoji（📚 等）会导致日志写入崩溃
+# 统一重配 stdout/stderr 为 UTF-8（必须在任何 logging 初始化前执行）
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

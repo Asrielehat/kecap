@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>追问调试</title>
+<style>
+body { font-family: sans-serif; padding: 20px; }
+pre { background: #f5f5f5; padding: 10px; max-height: 400px; overflow: auto; white-space: pre-wrap; }
+button { padding: 8px 16px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; margin: 5px; }
+button:hover { background: #1d4ed8; }
+textarea { width: 100%; padding: 8px; margin: 5px 0; }
+.result { margin-top: 20px; }
+.error { color: red; }
+.success { color: green; }
+</style>
+</head>
+<body>
+<h2>追问 API 调试工具</h2>
+
+<div>
+<label>选中文字 (selected_text):</label>
+<textarea id="selectedText" rows="2">前序遍历</textarea>
+
+<label>上下文段落 (context_paragraph):</label>
+<textarea id="contextParagraph" rows="2">二叉树有三种遍历方式：前序遍历、中序遍历和后序遍历。前序遍历的顺序是根节点、左子树、右子树。</textarea>
+
+<label>消息 ID (message_id):</label>
+<input id="messageId" value="d78cc57e-d51b-401b-9e91-18431a755667" style="width:100%">
+
+<label>课程 ID (course_id):</label>
+<input id="courseId" value="d067cf3f-fff4-4470-bc23-42187b693f4f" style="width:100%">
+
+<label>会话 ID (conversation_id):</label>
+<input id="conversationId" value="" style="width:100%">
+</div>
+
+<div style="margin-top:15px;">
+<button onclick="testAPI()">发送 Follow-up 请求 (POST)</button>
+<button onclick="testEmptyMsgId()">测试空 message_id (应400)</button>
+</div>
+
+<div id="result" class="result"></div>
+
+<script>
+const API_BASE = window.location.port === "8000" ? "/api" : "http://localhost:8000/api";
+
+async function testAPI() {
+    const result = document.getElementById("result");
+    result.innerHTML = '<p class="success">请求中...</p>';
+
+    const body = {
+        selected_text: document.getElementById("selectedText").value,
+        context_paragraph: document.getElementById("contextParagraph").value,
+        message_id: document.getElementById("messageId").value,
+        course_id: document.getElementById("courseId").value,
+        conversation_id: document.getElementById("conversationId").value || "",
+    };
+
+    try {
+        console.log("Sending:", body);
+        const res = await fetch(`${API_BASE}/chat/follow-up`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
+        console.log("Status:", res.status);
+        const data = await res.json();
+        console.log("Response:", data);
+
+        if (res.ok) {
+            result.innerHTML = `
+                <p class="success">✓ 状态: ${res.status}</p>
+                <p><strong>追问 ID:</strong> ${data.id}</p>
+                <p><strong>回答长度:</strong> ${data.answer ? data.answer.length : 0} 字符</p>
+                <p><strong>引文数:</strong> ${data.citations ? data.citations.length : 0}</p>
+                <pre>${data.answer || "(empty answer!)"}</pre>
+            `;
+        } else {
+            result.innerHTML = `
+                <p class="error">✗ 状态: ${res.status}</p>
+                <pre>${JSON.stringify(data, null, 2)}</pre>
+            `;
+        }
+    } catch (e) {
+        result.innerHTML = `<p class="error">✗ 请求失败: ${e.message}</p>`;
+        console.error(e);
+    }
+}
+
+async function testEmptyMsgId() {
+    const result = document.getElementById("result");
+    const body = {
+        selected_text: "测试",
+        context_paragraph: "测试段落",
+        course_id: "d067cf3f-fff4-4470-bc23-42187b693f4f",
+        conversation_id: "",
+    };
+    try {
+        const res = await fetch(`${API_BASE}/chat/follow-up`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        result.innerHTML = `<p>状态: ${res.status}</p><pre>${JSON.stringify(data, null, 2)}</pre>`;
+    } catch (e) {
+        result.innerHTML = `<p class="error">✗ 请求失败: ${e.message}</p>`;
+    }
+}
+
+// Auto-test on load
+window.onload = () => {
+    document.getElementById("result").innerHTML = `<p>API Base: ${API_BASE} | Port: ${window.location.port}</p>`;
+};
+</script>
+</body>
+</html>

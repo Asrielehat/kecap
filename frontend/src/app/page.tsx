@@ -9,10 +9,28 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   citations?: Citation[];
+  skill?: string;
+  executionTrace?: ExecutionTrace;
+}
+
+interface PlanStep {
+  tool: string;
+  label: string;
+  detail: string;
+}
+
+interface ExecutionTrace {
+  intent: string;
+  search_queries?: string[];
+  skill?: string;
+  clarification?: string;
+  strategy?: string;
+  steps?: PlanStep[];
 }
 
 interface Citation {
   text: string;
+  full_text?: string;
   document_name: string;
   page?: number;
   chunk_id: string;
@@ -46,6 +64,7 @@ interface FollowUpModalState {
   zIndex: number;
 }
 
+
 // EXE/Docker 同源部署时页面由 FastAPI 提供（端口 8000），直接用相对路径 /api；
 // 否则（开发模式 :3000 或独立前端）回退到环境变量 / 本地默认地址。
 // 注意：不要依赖构建期 NEXT_PUBLIC_API_URL=/api —— Git Bash 会把 /api 误转成 E:/Git/api。
@@ -69,11 +88,13 @@ export default function Home() {
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [feedbackMap, setFeedbackMap] = useState<Record<number, string>>({});
+  const [sourceViewer, setSourceViewer] = useState<Citation | null>(null);
   const [followUpModals, setFollowUpModals] = useState<FollowUpModalState[]>([]);
   const [selectionData, setSelectionData] = useState<{
     text: string; paragraph: string; messageId: string; x: number; y: number;
   } | null>(null);
   const [topZIndex, setTopZIndex] = useState(200);
+  const [chatMode, setChatMode] = useState<"learning" | "query">("query");
   const chatEndRef = useRef<HTMLDivElement>(null);
   const dragCounter = useRef(0);
   const thinkingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -158,6 +179,8 @@ export default function Home() {
           role: m.role,
           content: m.content,
           citations: m.citations,
+          skill: m.skill,
+          executionTrace: m.execution_trace,
         }))
       );
     } catch (e) {
@@ -170,6 +193,31 @@ export default function Home() {
   function startNewConversation() {
     setMessages([]);
     setConversationId(null);
+    setFeedbackMap({});
+  }
+
+  async function deleteMessage(msgId: string | undefined, role: "user" | "assistant") {
+    if (!msgId) return;
+    const isUser = role === "user";
+    if (!confirm(
+      isUser
+        ? "删除这条提问？它对应的 AI 回答也会一并删除，之后 AI 不会再引用这段对话。"
+        : "删除这条 AI 回答？之后 AI 不会再引用这段对话。"
+    )) return;
+    try {
+      const res = await fetch(`${API_BASE}/conversations/messages/${msgId}`, { method: "DELETE" });
+      if (!res.ok) {
+        alert("删除失败，消息可能不存在或后端未启动。");
+        return;
+      }
+      const data = await res.json();
+      const deletedIds = new Set(data.deleted || []);
+      setMessages((prev) => prev.filter((m) => !deletedIds.has(m.id)));
+      setFeedbackMap({});
+    } catch (e) {
+      console.error("删除消息失败", e);
+      alert("删除失败，请检查后端服务是否启动。");
+    }
   }
 
   async function deleteConversation(convId: string) {
@@ -210,6 +258,7 @@ export default function Home() {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("course_id", courseId);
+      formData.append("mode", chatMode);
       const res = await fetch(`${API_BASE}/documents/upload`, {
         method: "POST",
         body: formData,
@@ -246,21 +295,32 @@ export default function Home() {
           course_id: selectedCourse,
           question,
           conversation_id: conversationId,
+          mode: chatMode,
         }),
       });
       const data = await res.json();
       setConversationId(data.conversation_id);
       // 刷新对话列表（标题可能更新）
       if (selectedCourse) fetchConversations(selectedCourse);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: data.assistant_message_id,
-          role: "assistant",
-          content: data.answer,
-          citations: data.citations,
-        },
-      ]);
+      setMessages((prev) => {
+        // 回填刚发送的用户消息 id（删除单条消息时需要）
+        const withUserIds = prev.map((m) =>
+          m.role === "user" && !m.id && m.content === question
+            ? { ...m, id: data.user_message_id }
+            : m
+        );
+        return [
+          ...withUserIds,
+          {
+            id: data.assistant_message_id,
+            role: "assistant",
+            content: data.answer,
+            citations: data.citations,
+            skill: data.skill,
+            executionTrace: data.execution_trace,
+          },
+        ];
+      });
     } catch (e) {
       setMessages((prev) => [
         ...prev,
@@ -670,7 +730,7 @@ export default function Home() {
                           if (confirm("确定删除此对话？")) deleteConversation(conv.id);
                         }}
                         disabled={deletingId === conv.id}
-                        className="px-1.5 py-0.5 text-zinc-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity text-xs shrink-0"
+                        className="px-1.5 py-0.5 text-zinc-400 hover:text-red-500 opacity-60 hover:opacity-100 transition-opacity text-xs shrink-0"
                         title="删除对话"
                       >
                         {deletingId === conv.id ? "..." : "🗑"}
@@ -755,10 +815,12 @@ export default function Home() {
           {messages.map((msg, i) => (
             <div
               key={i}
-              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+              className={`flex group ${
+                msg.role === "user" ? "justify-end" : "justify-start"
+              }`}
             >
               <div
-                className={`max-w-[80%] rounded-2xl px-5 py-3 ${
+                className={`relative max-w-[80%] rounded-2xl px-5 py-3 ${
                   msg.role === "user"
                     ? "bg-blue-600 text-white"
                     : "bg-zinc-100 text-zinc-800"
@@ -806,6 +868,39 @@ export default function Home() {
                       </ReactMarkdown>
                     </div>
 
+                    {/* 使用的技能 */}
+                    {msg.skill && (
+                      <div className="mt-2 flex items-center gap-1.5">
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">
+                          🛠 使用了 Skill：{msg.skill}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* 智能体执行过程 */}
+                    {msg.executionTrace && (
+                      <details className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50/60">
+                        <summary className="px-3 py-1.5 text-xs font-medium text-zinc-500 cursor-pointer hover:text-zinc-700">
+                          🤖 智能体执行过程
+                        </summary>
+                        <div className="px-3 pb-2 text-xs text-zinc-600 space-y-0.5">
+                          {msg.executionTrace.steps &&
+                            msg.executionTrace.steps.map((s, k) => (
+                              <div key={k} className="text-zinc-500">
+                                {s.label}：{s.detail}
+                              </div>
+                            ))}
+                          {(!msg.executionTrace.steps ||
+                            msg.executionTrace.steps.length === 0) &&
+                            msg.executionTrace.clarification && (
+                              <div className="text-zinc-500">
+                                💬 澄清：{msg.executionTrace.clarification}
+                              </div>
+                            )}
+                        </div>
+                      </details>
+                    )}
+
                     {/* 操作按钮 */}
                     <div className="flex items-center gap-2 mt-2 pt-2 border-t border-zinc-300 flex-wrap">
                       <span className="text-[10px] text-zinc-400">搞懂了吗？</span>
@@ -838,9 +933,10 @@ export default function Home() {
                         </summary>
                         <div className="mt-2 space-y-2">
                           {msg.citations.map((cit, j) => (
-                            <div
+                            <button
                               key={j}
-                              className="bg-white rounded-lg p-2 border border-zinc-200"
+                              onClick={() => setSourceViewer(cit)}
+                              className="w-full text-left bg-white rounded-lg p-2 border border-zinc-200 hover:border-blue-400 hover:bg-blue-50/40 transition-colors cursor-pointer group/source"
                             >
                               <div className="flex items-center justify-between mb-1">
                                 <span className="text-xs font-medium text-blue-600">
@@ -852,13 +948,25 @@ export default function Home() {
                                 </span>
                               </div>
                               <p className="text-xs text-zinc-600 line-clamp-3">{cit.text}</p>
-                            </div>
+                              <span className="inline-block mt-1.5 text-[10px] text-blue-500 opacity-60 group-hover/source:opacity-100 transition-opacity">
+                                点击查看原文 ↗
+                              </span>
+                            </button>
                           ))}
                         </div>
                       </details>
                     )}
                   </div>
                 )}
+
+                {/* 删除单条消息（纠正上下文） */}
+                <button
+                  onClick={() => deleteMessage(msg.id, msg.role)}
+                  className="absolute -top-2.5 -right-2.5 w-6 h-6 rounded-full bg-white border border-zinc-200 shadow-sm text-[11px] text-zinc-400 hover:text-red-500 hover:border-red-200 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  title={msg.role === "user" ? "删除这条提问（连同对应的回答）" : "删除这条 AI 回答"}
+                >
+                  🗑
+                </button>
               </div>
             </div>
           ))}
@@ -926,6 +1034,33 @@ export default function Home() {
 
         {/* 输入区域 */}
         <div className="px-6 py-4 border-t border-zinc-200 bg-white shrink-0">
+          {/* 模式切换 */}
+          <div className="flex justify-center mb-3">
+            <div className="inline-flex rounded-full bg-zinc-100 p-0.5">
+              <button
+                onClick={() => setChatMode("query")}
+                disabled={loading}
+                className={`px-4 py-1.5 rounded-full text-sm transition-colors ${
+                  chatMode === "query"
+                    ? "bg-white shadow text-zinc-800 font-medium"
+                    : "text-zinc-400 hover:text-zinc-600"
+                }`}
+              >
+                🔍 询问
+              </button>
+              <button
+                onClick={() => setChatMode("learning")}
+                disabled={loading}
+                className={`px-4 py-1.5 rounded-full text-sm transition-colors ${
+                  chatMode === "learning"
+                    ? "bg-blue-600 text-white shadow font-medium"
+                    : "text-zinc-400 hover:text-zinc-600"
+                }`}
+              >
+                📖 学习
+              </button>
+            </div>
+          </div>
           <div className="flex gap-3 max-w-4xl mx-auto">
             <input
               type="text"
@@ -965,8 +1100,55 @@ export default function Home() {
           onFollowUp={(text, paragraph, parentId) =>
             doFollowUp(text, paragraph, "", parentId)
           }
+          onViewSource={setSourceViewer}
         />
       ))}
+
+      {/* ── 参考来源原文查看弹窗 ── */}
+      {sourceViewer && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center p-6"
+          style={{ zIndex: topZIndex + 100 }}
+          onClick={() => setSourceViewer(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-zinc-200 shrink-0 bg-gradient-to-r from-blue-50 to-indigo-50">
+              <span className="text-sm">📄</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-zinc-800 truncate">
+                  {sourceViewer.document_name}
+                  {sourceViewer.page ? ` · 第 ${sourceViewer.page} 页` : ""}
+                </div>
+                <div className="text-[11px] text-zinc-500">
+                  相关度 {(sourceViewer.score * 100).toFixed(0)}%
+                </div>
+              </div>
+              <button
+                onClick={() => setSourceViewer(null)}
+                className="text-zinc-400 hover:text-zinc-600 hover:bg-zinc-200 rounded-full w-6 h-6 flex items-center justify-center text-sm shrink-0 transition-colors"
+              >
+                ×
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto px-5 py-4 bg-zinc-50">
+              <div className="bg-white rounded-lg border border-zinc-200 px-4 py-3">
+                <p className="text-[11px] text-zinc-400 mb-2 font-medium">📖 原文</p>
+                <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap break-words">
+                  {sourceViewer.full_text || sourceViewer.text}
+                </p>
+                {!sourceViewer.full_text && (
+                  <p className="text-[11px] text-zinc-400 mt-3">
+                    注：该条记录为历史对话，仅保存了片段预览。
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -978,12 +1160,14 @@ function DraggableModal({
   onClose,
   onFocus,
   onFollowUp,
+  onViewSource,
 }: {
   modal: FollowUpModalState;
   topZIndex: number;
   onClose: () => void;
   onFocus: () => void;
   onFollowUp: (text: string, paragraph: string, parentFollowUpId: string) => void;
+  onViewSource: (cit: Citation) => void;
 }) {
   const [pos, setPos] = useState({ x: modal.x, y: modal.y });
   const [dragging, setDragging] = useState(false);
@@ -1164,7 +1348,11 @@ function DraggableModal({
                 </summary>
                 <div className="mt-1.5 space-y-1.5">
                   {modal.citations.map((cit, j) => (
-                    <div key={j} className="bg-zinc-50 rounded-md p-2 border border-zinc-100">
+                    <button
+                      key={j}
+                      onClick={() => onViewSource(cit)}
+                      className="w-full text-left bg-zinc-50 rounded-md p-2 border border-zinc-100 hover:border-blue-300 hover:bg-blue-50/40 transition-colors cursor-pointer group/source"
+                    >
                       <div className="flex items-center justify-between mb-0.5">
                         <span className="text-[11px] font-medium text-blue-600">
                           {cit.document_name}{cit.page ? ` · 第${cit.page}页` : ""}
@@ -1174,7 +1362,10 @@ function DraggableModal({
                         </span>
                       </div>
                       <p className="text-[11px] text-zinc-500 line-clamp-2">{cit.text}</p>
-                    </div>
+                      <span className="inline-block mt-1 text-[10px] text-blue-500 opacity-60 group-hover/source:opacity-100 transition-opacity">
+                        查看原文 ↗
+                      </span>
+                    </button>
                   ))}
                 </div>
               </details>

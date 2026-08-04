@@ -76,6 +76,8 @@ class Message(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=True)
     feedback: Mapped[str] = mapped_column(String(20), nullable=True)  # understood / confused / null
     knowledge_point: Mapped[str] = mapped_column(String(100), nullable=True)  # LLM 提取的知识点关键词
+    skill: Mapped[str] = mapped_column(String(100), nullable=True)  # 本次回答使用的内置 skill 名称
+    execution_trace: Mapped[dict] = mapped_column(JSON, nullable=True)  # 智能体执行轨迹（规划+检索+技能+生成）
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")

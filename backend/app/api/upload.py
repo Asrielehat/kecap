@@ -21,9 +21,17 @@ router = APIRouter(prefix="/api/documents", tags=["文档管理"])
 async def upload_document(
     file: UploadFile = File(...),
     course_id: str = Form(...),
+    mode: str = Form("query"),
     db: AsyncSession = Depends(get_db),
 ):
-    """上传课程文档，自动解析、分块、向量化"""
+    """上传课程文档，自动解析、分块、向量化
+
+    mode="learning": 更细切分（400字），适合深入学习
+    mode="query":   标准切分（800字），适合快速问答（默认）
+    """
+    preset = settings.rag_mode_presets.get(mode, settings.rag_mode_presets["query"])
+    chunk_size = preset["chunk_size"]
+    chunk_overlap = preset["chunk_overlap"]
 
     # ── 1. 校验文件格式 ──
     ext = Path(file.filename).suffix.lower().lstrip(".")
@@ -54,8 +62,8 @@ async def upload_document(
         os.remove(file_path)
         raise HTTPException(status_code=500, detail=f"文档解析失败: {str(e)}")
 
-    # ── 5. 智能分块 ──
-    chunks = smart_chunk(full_text)
+    # ── 5. 智能分块（按模式使用不同粒度）──
+    chunks = smart_chunk(full_text, chunk_size=chunk_size, overlap=chunk_overlap)
     if not chunks:
         os.remove(file_path)
         raise HTTPException(status_code=400, detail="文档内容为空或无法提取文本")

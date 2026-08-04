@@ -90,24 +90,71 @@ def rerank(query: str, documents: list[dict], top_k: int = None) -> list[dict]:
     """
     Cross-encoder 重排序 —— 从粗召回结果中精选最相关片段
 
-    粗召回（Top-10）→ Reranker 精排 → Top-3
-    如果 Reranker 不可用，直接按向量相似度排序返回
+    策略（v2）：动态阈值，而非固定数量
+      1. 先归一化所有分数到 0~1 区间（兼容向量分数和 Cross-encoder 分数）
+      2. 取第一名归一化分数为基准
+      3. 归一化分数 ≥ 基准 × 50% 的全部保留
+      4. 保底最少 3 条，上限 8 条
     """
     if not documents:
         return []
 
-    top_k = top_k or settings.rerank_top_k
-
-    # 如果粗召回结果少，直接返回
-    if len(documents) <= top_k:
-        return documents
+    min_count = top_k or settings.rerank_top_k  # 最少保留条数
 
     reranker = _get_reranker()
+    if reranker:
+        # Cross-encoder 精排
+        pairs = [(query, d["content"][:512]) for d in documents]
+        scores = reranker.predict(pairs)
+        for d, score in zip(documents, scores):
+            d["rerank_score"] = float(score)
+        documents.sort(key=lambda d: d.get("rerank_score", 0), reverse=True)
+    else:
+        # 降级：按向量相似度排序
+        documents.sort(key=lambda d: d.get("score", 0), reverse=True)
 
-    # 当前 Reranker（BGE-Reranker-v2-m3）对中文学术文本排序效果不稳定
-    # 直接用向量相似度排序更可靠，Reranker 暂时跳过
-    documents.sort(key=lambda d: d.get("score", 0), reverse=True)
-    return documents[:top_k]
+    # ── 提取有效分数并归一化到 0~1 ──
+    raw_scores = [
+        d.get("rerank_score") or d.get("score", 0)
+        for d in documents
+    ]
+    min_s, max_s = min(raw_scores), max(raw_scores)
+    if max_s > min_s:
+        for d in documents:
+            raw = d.get("rerank_score") or d.get("score", 0)
+            d["_norm_score"] = (raw - min_s) / (max_s - min_s)
+    else:
+        # 所有分数一样，都归一化到 1.0
+        for d in documents:
+            d["_norm_score"] = 1.0
+
+    print(f"[Reranker] 文档数={len(documents)} 分数范围={min_s:.4f}~{max_s:.4f} "
+          f"reranker={'on' if reranker else 'off'}", flush=True)
+    for i, d in enumerate(documents[:8]):
+        print(f"  [{i+1}] norm={d['_norm_score']:.3f} raw={d.get('rerank_score') or d.get('score'):.4f} "
+              f"src={d.get('document_name','?')[:30]}", flush=True)
+
+    # ── 动态阈值截断（基于归一化分数）──
+    threshold = documents[0]["_norm_score"] * 0.5
+
+    selected = []
+    for d in documents:
+        if d["_norm_score"] >= threshold:
+            selected.append(d)
+        else:
+            break
+
+    if len(selected) < min_count:
+        selected = documents[:min_count]
+    if len(selected) > 8:
+        selected = selected[:8]
+
+    # 清理临时字段
+    for d in documents:
+        d.pop("_norm_score", None)
+
+    print(f"[Reranker] 阈值={threshold:.3f} 选中={len(selected)}条", flush=True)
+    return selected
 
 
 def expand_query(query: str) -> list[str]:
@@ -177,12 +224,17 @@ def retrieve_with_rerank(
     course_id: str,
     top_k: int = None,
     score_threshold: float = None,
+    mode: str = "query",
 ) -> list[dict]:
     """
-    完整检索链路：Query 扩展 → 混合检索 → 合并去重 → 重排序
+    完整检索链路：Query 扩展 → 混合检索 → 合并去重 → 重排序（动态阈值）
+
+    mode="learning": 更低阈值、更多召回（5-8条）
+    mode="query":   标准设置（3-8条动态）
     """
-    top_k = top_k or settings.retrieval_top_k
-    score_threshold = score_threshold or settings.retrieval_score_threshold
+    preset = settings.rag_mode_presets.get(mode, settings.rag_mode_presets["query"])
+    top_k = top_k or preset["retrieval_top_k"]
+    score_threshold = score_threshold or preset["score_threshold"]
 
     # 1. Query 扩展
     queries = expand_query(query)
@@ -199,7 +251,31 @@ def retrieve_with_rerank(
 
     documents = sorted(all_results.values(), key=lambda d: d["score"], reverse=True)
 
-    # 3. 重排序
-    documents = rerank(query, documents)
+    # 3. 重排序（传入 mode 以使用对应的 rerank_min）
+    documents = rerank(query, documents, top_k=preset["rerank_min"])
 
     return documents
+
+
+def retrieve_for_plan(search_queries: list[str], course_id: str, mode: str = "query") -> list[dict]:
+    """智能体计划检索 —— 按 planner 给出的多个关键词检索
+
+    每个 query 调 hybrid_search，按 chunk_id 合并去重（保留高分），
+    合并后 rerank() 一次 + 动态阈值（复用 retrieve_with_rerank 的预设参数）。
+    """
+    preset = settings.rag_mode_presets.get(mode, settings.rag_mode_presets["query"])
+    top_k = preset["retrieval_top_k"]
+    score_threshold = preset["score_threshold"]
+
+    all_results = {}
+    for q in search_queries:
+        results = hybrid_search(q, course_id, top_k=top_k, score_threshold=score_threshold)
+        for r in results:
+            cid = r.get("chunk_id")
+            if cid and (cid not in all_results or r["score"] > all_results[cid]["score"]):
+                all_results[cid] = r
+
+    documents = sorted(all_results.values(), key=lambda d: d["score"], reverse=True)
+    if not documents:
+        return []
+    return rerank(search_queries[0], documents, top_k=preset["rerank_min"])
