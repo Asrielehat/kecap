@@ -19,7 +19,7 @@ Students upload course materials (textbooks, slides, notes), and the assistant p
 | LLM | DeepSeek V3 API |
 | Embedding | SiliconFlow BGE-M3 |
 | Vector Database | Qdrant |
-| Database | PostgreSQL |
+| Database | SQLite (local) / PostgreSQL (Docker) |
 | Voice TTS | GPT-SoVITS (optional) |
 
 ## 🚀 Quick Start (Standalone EXE)
@@ -163,10 +163,13 @@ kecap/
 │   │   │   ├── courses.py    # Course management API
 │   │   │   ├── conversations.py  # Conversation history API
 │   │   │   └── feedback.py   # Message feedback API
+│   │   ├── skills/
+│   │   │   └── loader.py     # Skill system (SKILL.md loading)
 │   │   └── rag/
 │   │       ├── document_processor.py  # Document parsing + chunking
 │   │       ├── vector_store.py        # Qdrant vector store
 │   │       ├── retriever.py           # Hybrid retrieval + reranking
+│   │       ├── planner.py             # Sub-question planning (agent)
 │   │       └── generator.py           # LLM answer generation
 │   ├── requirements.txt
 │   ├── Dockerfile
@@ -184,6 +187,18 @@ Ask questions about your course materials. The system retrieves relevant chunks,
 ### 🔍 Follow-up (Context-Isolated)
 Select any text in an answer to ask a follow-up question in a draggable modal. Follow-ups are **context-isolated** — they don't pollute the main conversation history. Supports **nested follow-up chains** (ask follow-ups within follow-ups).
 
+### 🧠 Agentic RAG Pipeline
+The assistant **plans before answering**: it decomposes the question into up to 3 sub-questions, retrieves for each one, merges & deduplicates the hits, then **self-checks** the final answer against the source material and revises it if it drifts or misses key points. (Tunable via `AGENT_PLANNING_ENABLED` / `ANSWER_SELFCHECK_ENABLED`.)
+
+### 🎯 Vague Follow-up Anchoring
+When you ask a follow-up like "explain it with a different example" without restating the topic, the system automatically **anchors it to the previous topic** instead of searching blindly.
+
+### 🗑️ Message Deletion
+Delete any user or AI message — along with its follow-up chain — to fix input mistakes or remove polluted context. An always-visible delete button sits on each message.
+
+### 📦 Skill System
+Drop a `SKILL.md` into `backend/skills/<skill-name>/` to inject custom behavior (name / description / triggers / force mode / full-history) into the LLM.
+
 ### 📚 Document Management
 Upload PDF, PPT, DOCX, and MD files. Documents are auto-parsed, chunked, and vectorized for retrieval.
 
@@ -196,23 +211,30 @@ All Q&A sessions are saved. Switch between conversations in the sidebar.
 |--------|------|-------------|
 | POST | `/api/courses/` | Create a course |
 | GET | `/api/courses/` | List courses |
+| GET | `/api/courses/{course_id}` | Get course details |
+| DELETE | `/api/courses/{course_id}` | Delete a course |
 | POST | `/api/documents/upload` | Upload a document (auto parse + vectorize) |
 | POST | `/api/chat/ask` | RAG Q&A (returns answer + citations) |
 | POST | `/api/chat/ask/stream` | Streaming RAG Q&A (SSE) |
 | POST | `/api/chat/follow-up` | Context-isolated follow-up Q&A (supports nesting) |
-| GET | `/api/conversations/` | List conversations |
-| GET | `/api/conversations/{id}` | Get conversation messages |
-| POST | `/api/feedback/` | Submit message feedback |
+| GET | `/api/conversations/{course_id}` | List conversations of a course |
+| GET | `/api/conversations/{conversation_id}/messages` | Get conversation messages |
+| DELETE | `/api/conversations/{conversation_id}/messages/{message_id}` | Delete a message (and its follow-up chain) |
+| DELETE | `/api/conversations/{conversation_id}` | Delete a conversation |
+| POST | `/api/feedback/{message_id}` | Submit message feedback |
+| GET | `/api/feedback/stats/{course_id}` | Get feedback statistics |
 
 ## RAG Pipeline
 
 ```
-User question → Query expansion → Vector retrieval (BM25 + semantic) → Top-10 recall
-→ Cross-encoder reranking → Top-3 → LLM answer generation
+User question → (Agent) Sub-question planning → Vector retrieval (BM25 + semantic) → Top-10 recall
+→ Cross-encoder reranking → Top-3 → LLM answer generation → Self-check & revise
 → Sentence-level citation annotation → Response
 
 Follow-up: Selected text + context paragraph → Anchor retrieval → LLM explanation
 → Saved to follow_ups table (isolated from main conversation)
+
+Delete message: removes the message and its follow-up chain from the conversation
 ```
 
 ---
@@ -235,7 +257,7 @@ Follow-up: Selected text + context paragraph → Anchor retrieval → LLM explan
 | LLM | DeepSeek V3 API |
 | Embedding | 硅基流动 BGE-M3 |
 | 向量数据库 | Qdrant |
-| 业务数据库 | PostgreSQL |
+| 业务数据库 | SQLite（本地）/ PostgreSQL（Docker） |
 | 语音 TTS | GPT-SoVITS（可选） |
 
 ## 🚀 快速使用（EXE 一键版）
@@ -380,10 +402,13 @@ kecap/
 │   │   │   ├── courses.py    # 课程管理 API
 │   │   │   ├── conversations.py  # 对话历史 API
 │   │   │   └── feedback.py   # 消息反馈 API
+│   │   ├── skills/
+│   │   │   └── loader.py     # 技能系统（SKILL.md 加载）
 │   │   └── rag/
 │   │       ├── document_processor.py  # 文档解析 + 分块
 │   │       ├── vector_store.py        # Qdrant 向量存储
 │   │       ├── retriever.py           # 混合检索 + 重排序
+│   │       ├── planner.py             # 子问题规划（智能体）
 │   │       └── generator.py           # LLM 答案生成
 │   ├── requirements.txt
 │   ├── Dockerfile
@@ -401,6 +426,18 @@ kecap/
 ### 🔍 追问（上下文隔离）
 在回答中选中任意文字即可弹出拖拽式追问窗口。追问**上下文隔离**，不会污染主对话历史。支持**嵌套追问链**（追问弹窗内继续追问）。
 
+### 🧠 智能体流水线（Agentic RAG）
+回答前先**规划**：把问题拆解成最多 3 个子问题，逐个检索后合并去重，再对最终答案对照资料**自检**，跑偏、漏关键点或有错就自动重写。（`AGENT_PLANNING_ENABLED` / `ANSWER_SELFCHECK_ENABLED` 可开关。）
+
+### 🎯 模糊追问锚定
+追问"换个例子解释一下""再详细点"这类没带主题的话时，系统自动**锚定到上一话题**检索，而不是盲搜。
+
+### 🗑️ 消息删除
+可删除任意一条用户或 AI 消息——连同它的追问链一起——修正输入错误、清理被污染的上下文。每条消息上都有常驻可见的删除按钮。
+
+### 📦 技能（Skill）系统
+在 `backend/skills/<技能名>/` 放入 `SKILL.md` 即可向模型注入自定义行为（name / description / triggers / force / 全历史等），实现按需定制。
+
 ### 📚 文档管理
 支持上传 PDF、PPT、DOCX、MD 文件，自动解析、分块、向量化。
 
@@ -413,21 +450,28 @@ kecap/
 |------|------|------|
 | POST | `/api/courses/` | 创建课程 |
 | GET | `/api/courses/` | 课程列表 |
+| GET | `/api/courses/{course_id}` | 课程详情 |
+| DELETE | `/api/courses/{course_id}` | 删除课程 |
 | POST | `/api/documents/upload` | 上传文档（自动解析+向量化） |
 | POST | `/api/chat/ask` | RAG 答疑（返回答案+引文） |
 | POST | `/api/chat/ask/stream` | 流式 RAG 答疑（SSE） |
 | POST | `/api/chat/follow-up` | 上下文隔离追问（支持嵌套） |
-| GET | `/api/conversations/` | 对话列表 |
-| GET | `/api/conversations/{id}` | 获取对话消息 |
-| POST | `/api/feedback/` | 提交消息反馈 |
+| GET | `/api/conversations/{course_id}` | 课程下的对话列表 |
+| GET | `/api/conversations/{conversation_id}/messages` | 获取对话消息 |
+| DELETE | `/api/conversations/{conversation_id}/messages/{message_id}` | 删除消息（含追问链） |
+| DELETE | `/api/conversations/{conversation_id}` | 删除对话 |
+| POST | `/api/feedback/{message_id}` | 提交消息反馈 |
+| GET | `/api/feedback/stats/{course_id}` | 反馈统计 |
 
 ## RAG 链路
 
 ```
-用户提问 → Query扩展 → 向量检索(BM25+语义) → 召回Top-10
-→ Cross-encoder Reranker 精排 → Top-3 → LLM生成答案
+用户提问 → (智能体)子问题规划 → 向量检索(BM25+语义) → 召回Top-10
+→ Cross-encoder Reranker 精排 → Top-3 → LLM生成答案 → 自检并修正
 → 逐句标注引用来源 → 返回给用户
 
 追问: 选中文字 + 上下文段落 → 锚点检索 → LLM解释
 → 存入 follow_ups 表（与主对话隔离）
+
+删除消息: 连同其追问链一起从对话中移除
 ```
