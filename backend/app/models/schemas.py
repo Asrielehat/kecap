@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 
 # ── 文档上传 ──
@@ -18,6 +18,9 @@ class ChatRequest(BaseModel):
     course_id: str = Field(..., description="课程 ID，用于限定检索范围")
     question: str = Field(..., min_length=1, max_length=2000)
     conversation_id: Optional[str] = Field(None, description="会话 ID，用于多轮对话")
+    mode: Literal["all", "query", "learning"] = Field(
+        "all", description="学习模式：query(查询)/learning(学习)/all，技能系统据此触发必触发技能"
+    )
 
 
 class Citation(BaseModel):
@@ -35,6 +38,9 @@ class ChatResponse(BaseModel):
     conversation_id: str
     assistant_message_id: str = ""
     confidence: float = Field(..., ge=0, le=1)
+    agent_trace: Optional[list] = Field(
+        None, description="Agent 运行轨迹（检索轮次/MCP 工具调用），供前端'思考过程'面板展示；未启用 agent 时为 None"
+    )
 
 
 # ── 课程 ──
@@ -60,6 +66,13 @@ class FollowUpRequest(BaseModel):
     parent_follow_up_id: Optional[str] = Field(None, description="嵌套追问：父追问记录 ID（追问弹窗里的追问）")
     course_id: str = Field(..., description="课程 ID")
     conversation_id: str = Field(..., description="主会话 ID")
+    question: Optional[str] = Field(
+        None, min_length=1, max_length=2000,
+        description="追问对话框内用户的具体问题（可选）；为空则按原四段式自动解释",
+    )
+    history: Optional[list[dict]] = Field(
+        None, description="追问对话框此前的问答轮次 [{question?, answer}, ...]，帮助理解承接式提问"
+    )
 
 
 class FollowUpResponse(BaseModel):
@@ -68,3 +81,4 @@ class FollowUpResponse(BaseModel):
     citations: list[Citation] = []
     message_id: Optional[str] = None
     parent_follow_up_id: Optional[str] = None
+    question: Optional[str] = None

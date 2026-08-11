@@ -21,9 +21,13 @@ if getattr(sys, "frozen", False):
     # 前端静态文件打包在 sys._MEIPASS 中
     FRONTEND_DIR = Path(sys._MEIPASS) / "frontend"
 else:
-    # 开发环境直接运行 python main_exe.py
+    # 开发环境直接运行 python app/main_exe.py
     BASE_DIR = Path(__file__).resolve().parent.parent  # = backend/
     FRONTEND_DIR = BASE_DIR.parent / "frontend" / "out"  # = kecap/frontend/out
+    # 修复: `python app/main_exe.py` 运行时 Python 只会把脚本所在目录 app/ 加入
+    # sys.path，导致 `from app.main import app` 报 ModuleNotFoundError。
+    # 手动把 backend/ 加入模块搜索路径（frozen/EXE 模式走 PyInstaller 配置，无需）。
+    sys.path.insert(0, str(BASE_DIR))
 
 # 加载 .env 文件（从 EXE 同级目录）
 env_file = BASE_DIR / ".env"

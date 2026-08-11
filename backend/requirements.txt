@@ -36,3 +36,10 @@ pydantic-settings==2.7.0
 
 # CORS
 # starlette 由 fastapi 自动安装，无需单独指定
+
+# MCP（可选增强：接入 fetch 工具服务器，默认 MCP_ENABLED=false）
+mcp>=1.9,<2
+mcp-server-fetch==2026.7.10
+
+# 技能系统（SKILL.md frontmatter 解析）
+PyYAML>=6.0

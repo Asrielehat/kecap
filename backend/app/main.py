@@ -20,6 +20,12 @@ async def lifespan(app: FastAPI):
     print("[Kecap] Qdrant 集合就绪 (本地模式)")
     print(f"[Kecap] API 文档: http://localhost:8000/docs\n")
     yield
+    # 关闭 MCP 客户端（回收 stdio 子进程；未启动/未启用时为 no-op）
+    try:
+        from app.mcp.client import mcp_manager
+        mcp_manager.close()
+    except Exception as e:
+        print(f"[MCP] 关闭异常（可忽略）: {e}")
     print("[Kecap] 应用关闭")
 
 

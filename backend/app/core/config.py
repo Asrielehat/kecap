@@ -58,6 +58,31 @@ class Settings(BaseSettings):
     rerank_top_k: int = 3
     retrieval_score_threshold: float = 0.35
 
+    # ── MCP 工具（可选增强，默认关闭）──
+    # 开启后 LLM 可通过 function calling 调用外部 MCP 工具（如 fetch 抓网页）
+    mcp_enabled: bool = False
+    mcp_server_command: str = ""            # 留空自动：开发=sys.executable，EXE=python
+    mcp_server_args: str = "-m mcp_server_fetch"   # 字符串 + shlex.split，避免 list 的 JSON env 格式
+    mcp_connect_timeout: float = 15.0       # 连接就绪超时（秒）
+    mcp_tool_timeout: float = 60.0          # 单次 call_tool 超时（秒）
+    mcp_max_steps: int = 3                  # agent 循环最大轮数
+    mcp_tool_max_tokens: int = 300          # 工具选择 LLM 调用的 max_tokens
+    mcp_tool_result_max_chars: int = 8000   # 回填给模型的工具结果最大字符数
+
+    # ── 技能系统（可选增强，默认关闭）──
+    # 开启后，问题命中技能触发条件时，把技能指令注入 system prompt 影响 LLM 输出
+    skills_enabled: bool = False
+    skills_dir: str = "./skills"            # 技能文件目录（相对 backend/ 运行目录）
+    skills_max_history_chars: int = 20000   # 完整历史注入的最大字符数（超出从最旧裁剪）
+
+    # ── 检索智能体（可选增强，默认关闭）──
+    # 开启后，检索不再是硬编码单次调用，而是 LLM 通过 function calling 自主决定
+    # 检索（search_knowledge_base 工具）：查什么、查几次、结果不理想可换词重查
+    agent_retrieval_enabled: bool = False
+    agent_max_steps: int = 3                  # 检索决策循环最大轮数
+    agent_tool_max_tokens: int = 300          # 检索决策 LLM 的 max_tokens（只决策不写答案）
+    agent_tool_result_max_chars: int = 8000   # 回填给决策 LLM 的检索结果摘要上限（字符）
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
