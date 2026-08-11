@@ -83,6 +83,16 @@ class Settings(BaseSettings):
     agent_tool_max_tokens: int = 300          # 检索决策 LLM 的 max_tokens（只决策不写答案）
     agent_tool_result_max_chars: int = 8000   # 回填给决策 LLM 的检索结果摘要上限（字符）
 
+    # ── 检索规划（智能体流水线第 1 步）──
+    # 开启后，先让 LLM 把问题拆成最多 3 个子问题，再逐个子问题检索并合并去重，
+    # 覆盖问题的不同侧面；规划失败自动回退原问题单查询。
+    agent_planning_enabled: bool = True
+
+    # ── 答案自检（智能体流水线最后一步）──
+    # 开启后，答案生成完再让 LLM 对照参考资料质检一遍，发现跑题/漏关键点/事实错误
+    # 就重写为修正版；质检失败自动保留原答案。
+    answer_selfcheck_enabled: bool = True
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

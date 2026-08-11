@@ -1,5 +1,7 @@
 """LLM 答案生成 + 引文溯源"""
 
+import json
+import re
 import time
 
 from openai import OpenAI
@@ -176,6 +178,16 @@ def generate_answer(
         )
         answer = response.choices[0].message.content
 
+    # ── 智能体流水线最后一步：答案自检（对照参考资料质检，跑偏/漏点/有错就重写）──
+    if settings.answer_selfcheck_enabled:
+        answer, revised = self_check_answer(question, retrieved_docs, answer, llm_client)
+        print(f"[SelfCheck] 自检{'已修正' if revised else '通过'}（{len(answer or '')} 字符）", flush=True)
+        if trace is not None:
+            trace.append({
+                "step": len(trace) + 1, "type": "selfcheck",
+                "note": "对照参考资料质检：" + ("发现偏差，已重写为修正版" if revised else "通过"),
+            })
+
     # 构建引文列表
     citations = []
     for i, doc in enumerate(retrieved_docs, start=1):
@@ -237,6 +249,69 @@ FOLLOW_UP_QUESTION_PROMPT = """你是一个耐心的学业辅导老师。学生�
 
 - 答案控制在 600 字以内，精炼但完整
 - 回答结尾列出「参考来源」清单（如有）"""
+
+
+# ── 答案自检（智能体流水线最后一步）──
+SELFCHECK_SYSTEM = (
+    "你是'课答'智能体的答案质检员。学生会给你问题、参考资料和 AI 生成的答案，你要检查：\n"
+    "1. 是否答非所问 / 跑题；\n"
+    "2. 参考资料中明确有的关键点是否被遗漏；\n"
+    "3. 是否存在事实错误、或与参考资料矛盾的内容。\n"
+    "只返回 JSON，不要任何解释：{\"verdict\": \"ok\" 或 \"revise\", \"revised\": \"修正后的完整答案\"}\n"
+    "- verdict 为 \"ok\" 时，revised 给空字符串；\n"
+    "- verdict 为 \"revise\" 时，revised 必须是覆盖原答案的完整修正版，不要只写修改意见。"
+)
+
+
+def _extract_json_object(text: str) -> dict | None:
+    """鲁棒提取 LLM 输出里的 JSON 对象（容忍代码块 / 前后废话）"""
+    text = (text or "").strip()
+    text = re.sub(r"^```(?:json)?|```$", "", text, flags=re.MULTILINE).strip()
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return None
+
+
+def self_check_answer(
+    question: str,
+    retrieved_docs: list[dict],
+    answer: str,
+    llm_client,
+) -> tuple[str, bool]:
+    """答案自检：对照参考资料质检，发现跑题 / 漏关键点 / 事实错误就重写为修正版。
+
+    返回 (final_answer, revised)。任何一步失败都保留原答案（安全回退）。
+    """
+    try:
+        context = "\n\n---\n\n".join(
+            f"[{i}] 【来源: {d.get('document_name', '未知文档')}】\n{(d.get('content') or '')[:800]}"
+            for i, d in enumerate(retrieved_docs[:5], start=1)
+        ) or "（无参考资料）"
+        resp = llm_client.chat.completions.create(
+            model=settings.llm_model,
+            messages=[
+                {"role": "system", "content": SELFCHECK_SYSTEM},
+                {"role": "user", "content": (
+                    f"## 学生的问题\n{question}\n\n"
+                    f"## 参考资料\n{context}\n\n"
+                    f"## AI 生成的答案\n{(answer or '')[:3000]}"
+                )},
+            ],
+            temperature=0.3,
+            max_tokens=max(settings.llm_max_tokens, 2048),
+        )
+        data = _extract_json_object(resp.choices[0].message.content)
+        if data and data.get("verdict") == "revise":
+            revised = (data.get("revised") or "").strip()
+            if len(revised) >= 20 and revised != (answer or "").strip():
+                return revised, True
+    except Exception as e:
+        print(f"[SelfCheck] 质检失败，保留原答案: {e}", flush=True)
+    return answer, False
 
 
 def _build_follow_up_context(retrieved_docs: list[dict]) -> str:
@@ -410,22 +485,45 @@ def generate_answer_stream(
         except Exception as e:
             print(f"[MCP] 工具增强不可用，回退纯 RAG: {e}", flush=True)
 
+    # ── 得到完整答案（自检需对照全文，故先生成完整版再流式输出）──
     if agent_answer and len(agent_answer.strip()) >= 20:
-        # 智能体已自行作答：逐小段产出，保持"逐字流式"观感（思考过程已实时展示）
+        # 智能体已自行作答：工具轮次中模型直接给出结论，不再二次调用（agent 闭环）
         print(f"[Generator] 智能体直接作答 {len(agent_answer)} 字符（跳过二次生成）", flush=True)
-        for i in range(0, len(agent_answer), 3):
-            yield agent_answer[i:i + 3]
-            time.sleep(0.015)
+        answer = agent_answer
+    elif settings.answer_selfcheck_enabled:
+        # 自检需对照全文，先非流式取全文再质检
+        response = llm_client.chat.completions.create(
+            model=settings.llm_model,
+            messages=messages,
+            temperature=settings.llm_temperature,
+            max_tokens=settings.llm_max_tokens,
+        )
+        answer = response.choices[0].message.content or ""
+    else:
+        # 未启用自检：保持真流式（逐 token 直达）
+        stream = llm_client.chat.completions.create(
+            model=settings.llm_model,
+            messages=messages,
+            temperature=settings.llm_temperature,
+            max_tokens=settings.llm_max_tokens,
+            stream=True,
+        )
+        for chunk in stream:
+            if chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
         return
 
-    stream = llm_client.chat.completions.create(
-        model=settings.llm_model,
-        messages=messages,
-        temperature=settings.llm_temperature,
-        max_tokens=settings.llm_max_tokens,
-        stream=True,
-    )
+    # ── 智能体流水线最后一步：答案自检 ──
+    if settings.answer_selfcheck_enabled:
+        answer, revised = self_check_answer(question, retrieved_docs, answer, llm_client)
+        print(f"[SelfCheck] 自检{'已修正' if revised else '通过'}（{len(answer or '')} 字符）", flush=True)
+        if trace is not None:
+            trace.append({
+                "step": len(trace) + 1, "type": "selfcheck",
+                "note": "对照参考资料质检：" + ("发现偏差，已重写为修正版" if revised else "通过"),
+            })
 
-    for chunk in stream:
-        if chunk.choices[0].delta.content:
-            yield chunk.choices[0].delta.content
+    # 逐小段流式输出最终答案，保持"逐字流式"观感（思考过程已实时展示）
+    for i in range(0, len(answer or ""), 3):
+        yield (answer or "")[i:i + 3]
+        time.sleep(0.015)

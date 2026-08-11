@@ -14,16 +14,17 @@ interface Message {
   traceOpen?: boolean;   // 思考面板展开态（流式后保留，用户可自由收/放）
 }
 
-/** Agent 运行轨迹单步：检索轮次 / MCP 工具调用 / 兜底 */
+/** Agent 运行轨迹单步：规划 / 检索轮次 / MCP 工具调用 / 兜底 / 自检 */
 interface AgentTraceStep {
   step: number;
-  type: "retrieval" | "tool" | "fallback";
+  type: "plan" | "retrieval" | "tool" | "fallback" | "selfcheck";
   query?: string;
   top_k?: number;
   hits?: number;
   scores?: number[];
   preview?: string;
   content?: string;
+  sub_questions?: string[];
   tool?: string;
   args?: string;
   ok?: boolean;
@@ -1050,7 +1051,9 @@ export default function Home() {
                                     <span>检索 </span>
                                     <span className="font-mono text-zinc-700">「{s.query}」</span>
                                     <span>
-                                      {" "}· top_k={s.top_k} · 命中 {s.hits} 条
+                                      {" "}
+                                      {s.top_k != null && <>· top_k={s.top_k} </>}
+                                      · 命中 {s.hits ?? 0} 条
                                       {s.scores && s.scores.length > 0 && (
                                         <> · {s.scores.map((sc) => (sc * 100).toFixed(0) + "%").join(", ")}</>
                                       )}
@@ -1061,6 +1064,31 @@ export default function Home() {
                                       {s.content}
                                     </p>
                                   )}
+                                </div>
+                              )}
+                              {s.type === "plan" && (
+                                <div>
+                                  <div className="text-zinc-400">
+                                    <span>规划 </span>
+                                    {s.sub_questions && s.sub_questions.length > 0 ? (
+                                      <span className="font-mono text-zinc-700">
+                                        {s.sub_questions.join(" ｜ ")}
+                                      </span>
+                                    ) : (
+                                      s.note
+                                    )}
+                                  </div>
+                                  {s.note && s.sub_questions && s.sub_questions.length > 0 && (
+                                    <p className="text-zinc-700 mt-1">{s.note}</p>
+                                  )}
+                                </div>
+                              )}
+                              {s.type === "selfcheck" && (
+                                <div>
+                                  <div className="text-zinc-400">
+                                    <span>质检 </span>
+                                    <span className="text-zinc-700">{s.note}</span>
+                                  </div>
                                 </div>
                               )}
                               {s.type === "tool" && (

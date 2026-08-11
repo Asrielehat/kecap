@@ -30,6 +30,32 @@ def _retrieve_docs(
     """
     if needs_full:
         return []
+    if settings.agent_planning_enabled:
+        # 智能体流水线第 1 步：规划拆解 → 逐子问题检索 → 合并去重（覆盖不同侧面）
+        from app.rag.planner import plan_sub_questions   # 懒导入，规划失败不影响主链路
+        sub_questions = plan_sub_questions(question, llm_client, trace=trace)
+        if trace is not None:
+            trace.append({
+                "step": len(trace) + 1, "type": "plan",
+                "sub_questions": sub_questions,
+                "note": f"问题拆解为 {len(sub_questions)} 个子问题",
+            })
+        best: dict[str, dict] = {}
+        for sq in sub_questions:
+            hits = retrieve_with_rerank(sq, course_id)
+            if trace is not None:
+                trace.append({
+                    "step": len(trace) + 1, "type": "retrieval",
+                    "query": sq, "hits": len(hits),
+                })
+            for d in hits:
+                cid = d.get("chunk_id", d.get("id"))
+                if not cid:
+                    continue
+                if cid not in best or d["score"] > best[cid]["score"]:
+                    best[cid] = d
+        docs = sorted(best.values(), key=lambda d: d["score"], reverse=True)
+        return docs[: settings.retrieval_top_k]
     if settings.agent_retrieval_enabled:
         from app.rag.agent import run_retrieval_agent   # 懒导入，检索智能体不可用时不影响主链路
         docs = run_retrieval_agent(question, llm_client, course_id, trace=trace)

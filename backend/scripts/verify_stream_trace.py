@@ -17,6 +17,8 @@ import sys
 os.environ.setdefault("MCP_ENABLED", "false")
 FALLBACK = "--fallback" in sys.argv
 os.environ["AGENT_RETRIEVAL_ENABLED"] = "false" if FALLBACK else "true"
+# 规划是默认开启的（config 默认 True），fallback 模式必须关掉，否则会有 plan 轨迹
+os.environ["AGENT_PLANNING_ENABLED"] = "false" if FALLBACK else "true"
 
 from fastapi.testclient import TestClient
 from app.main import app
@@ -76,14 +78,14 @@ def main() -> None:
             return
 
         assert len(traces) > 0, "agent 开启时流式应有 trace 事件"
-        assert traces[0]["type"] == "retrieval", f"首条 trace 应为 retrieval，实际: {traces[0].get('type')}"
+        assert traces[0]["type"] in ("plan", "retrieval"), f"首条 trace 应为 plan/retrieval，实际: {traces[0].get('type')}"
         first_trace = kinds.index("trace")
         first_token = kinds.index("token")
         assert first_trace < first_token, "trace 应实时先于 token 出现（而非跑完后一次性下发）"
         assert answer, "答案不应为空"
         assert len(citations) > 0, "应有引文元数据"
         assert done_id, "done 事件应携带 assistant_message_id"
-        print("\n[判定] agent 开启：trace 逐条先于 token 实时推送，首条为 retrieval ✓")
+        print("\n[判定] agent 开启：trace 逐条先于 token 实时推送，首条为 plan/retrieval ✓")
 
 
 if __name__ == "__main__":
