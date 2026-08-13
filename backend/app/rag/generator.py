@@ -15,6 +15,17 @@ llm_client = OpenAI(
     base_url=settings.llm_base_url,
 )
 
+
+def _read_reasoning(delta) -> str:
+    """从流式 delta 读取 DeepSeek 推理链（reasoning_content）。
+
+    不同 OpenAI SDK 版本下该字段可能位于 delta.reasoning_content 或 model_extra。
+    """
+    v = getattr(delta, "reasoning_content", None)
+    if v:
+        return v
+    return (getattr(delta, "model_extra", None) or {}).get("reasoning_content") or ""
+
 # ── 系统提示词 ──
 SYSTEM_PROMPT = """你是一个专业的 AI 学业辅导助手"课答"。你的任务是基于课程资料和你的知识储备，准确、详细地回答学生的问题。
 
@@ -444,9 +455,10 @@ def generate_answer_stream(
     流式生成答案 —— 用于 SSE 推送到前端
 
     与 generate_answer 一致：技能解析 + MCP 工具增强（trace 就地追加 tool 条目），
-    最后流式调用 LLM。
+    最后流式调用 LLM。开启深度思考时，先用思考模型实时流式返回推理链
+    （reasoning），再流式返回答案正文（token）。
 
-    Yields: str (逐 token 输出)
+    Yields: tuple[str, str] —— ("reasoning", 推理链增量) 或 ("token", 答案增量)
     """
     # ── 技能解析（与 generate_answer 一致；懒导入 + 安全回退）──
     skill = None
@@ -490,6 +502,38 @@ def generate_answer_stream(
         # 智能体已自行作答：工具轮次中模型直接给出结论，不再二次调用（agent 闭环）
         print(f"[Generator] 智能体直接作答 {len(agent_answer)} 字符（跳过二次生成）", flush=True)
         answer = agent_answer
+    elif settings.llm_thinking_enabled:
+        # 深度思考：流式调用思考模型，推理链实时推、正文缓冲后自检再重放
+        try:
+            stream = llm_client.chat.completions.create(
+                model=settings.llm_thinking_model,
+                messages=messages,
+                temperature=settings.llm_temperature,
+                max_tokens=settings.llm_thinking_max_tokens,
+                stream=True,
+                extra_body={"thinking_mode": settings.llm_thinking_mode},
+            )
+            parts: list[str] = []
+            for chunk in stream:
+                delta = chunk.choices[0].delta
+                r = _read_reasoning(delta)
+                if r:
+                    yield ("reasoning", r)
+                if delta.content:
+                    parts.append(delta.content)
+            answer = "".join(parts)
+        except Exception as e:
+            print(f"[Thinking] 深度思考失败，回退纯 RAG 生成: {e}", flush=True)
+            answer = ""
+        # 思考模型偶尔只输出推理链而无正文（被截断），回退非思考模型补正文
+        if not answer.strip():
+            response = llm_client.chat.completions.create(
+                model=settings.llm_model,
+                messages=messages,
+                temperature=settings.llm_temperature,
+                max_tokens=settings.llm_max_tokens,
+            )
+            answer = response.choices[0].message.content or ""
     elif settings.answer_selfcheck_enabled:
         # 自检需对照全文，先非流式取全文再质检
         response = llm_client.chat.completions.create(
@@ -510,7 +554,7 @@ def generate_answer_stream(
         )
         for chunk in stream:
             if chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+                yield ("token", chunk.choices[0].delta.content)
         return
 
     # ── 智能体流水线最后一步：答案自检 ──
@@ -525,5 +569,5 @@ def generate_answer_stream(
 
     # 逐小段流式输出最终答案，保持"逐字流式"观感（思考过程已实时展示）
     for i in range(0, len(answer or ""), 3):
-        yield (answer or "")[i:i + 3]
+        yield ("token", (answer or "")[i:i + 3])
         time.sleep(0.015)

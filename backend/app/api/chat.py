@@ -426,11 +426,11 @@ async def ask_stream(request: ChatRequest, db: AsyncSession = Depends(get_db)):
                 "user_message_id": user_msg.id,
             })
 
-            # 答案：MCP 工具轮次实时推 trace，token 实时推
-            for token in generate_answer_stream(
+            # 答案：MCP 工具轮次实时推 trace，推理链(reasoning)/答案(token) 实时推
+            for kind, text in generate_answer_stream(
                 request.question, docs, conversation_history, mode=request.mode, trace=trace,
             ):
-                push("token", token)
+                push(kind, text)
         except Exception as e:
             print(f"[ask_stream] 流水线失败: {e}", flush=True)
             push("error", str(e))
@@ -452,6 +452,9 @@ async def ask_stream(request: ChatRequest, db: AsyncSession = Depends(get_db)):
                     citations_meta = payload["citations"]
                     confidence = payload.get("confidence", 0.0)
                     yield f"data: {json.dumps({'type': 'citations', 'data': citations_meta, 'conversation_id': payload['conversation_id'], 'user_message_id': payload.get('user_message_id')}, ensure_ascii=False)}\n\n"
+                elif kind == "reasoning":
+                    # 深度思考推理链：仅实时转发，不并入答案正文、不落库
+                    yield f"data: {json.dumps({'type': 'reasoning', 'data': payload}, ensure_ascii=False)}\n\n"
                 elif kind == "token":
                     full_answer += payload
                     yield f"data: {json.dumps({'type': 'token', 'data': payload}, ensure_ascii=False)}\n\n"

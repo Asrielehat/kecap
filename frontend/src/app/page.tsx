@@ -10,6 +10,8 @@ interface Message {
   content: string;
   citations?: Citation[];
   agentTrace?: AgentTraceStep[];
+  reasoning?: string;       // 深度思考推理链（流式累积，仅本次会话保留）
+  reasoningOpen?: boolean;  // 深度思考面板展开态（流式后保留，用户可自由收/放）
   streaming?: boolean;   // 流式生成中：思考面板实时展开、隐藏"思考中"占位
   traceOpen?: boolean;   // 思考面板展开态（流式后保留，用户可自由收/放）
 }
@@ -314,7 +316,7 @@ export default function Home() {
     setMessages((prev) => [
       ...prev,
       { role: "user", content: question },
-      { role: "assistant", content: "", citations: [], agentTrace: [], streaming: true },
+      { role: "assistant", content: "", citations: [], agentTrace: [], reasoning: "", streaming: true },
     ]);
 
     // 原地更新第 targetIndex 条（流式期间不重建整个消息数组）
@@ -342,6 +344,7 @@ export default function Home() {
       const decoder = new TextDecoder();
       let buf = "";
       let answer = "";
+      let reasoning = "";
       let trace: AgentTraceStep[] = [];
       let citations: Citation[] = [];
 
@@ -363,6 +366,9 @@ export default function Home() {
           if (evt.type === "trace") {
             trace = [...trace, evt.data];
             patchAssist({ agentTrace: trace });
+          } else if (evt.type === "reasoning") {
+            reasoning += evt.data;
+            patchAssist({ reasoning });
           } else if (evt.type === "token") {
             answer += evt.data;
             patchAssist({ content: answer });
@@ -1114,6 +1120,25 @@ export default function Home() {
                             </li>
                           ))}
                         </ol>
+                      </details>
+                    )}
+
+                    {msg.reasoning != null && msg.reasoning.length > 0 && (
+                      <details
+                        open={msg.reasoningOpen === undefined ? msg.streaming : msg.reasoningOpen}
+                        onToggle={(e) =>
+                          setMessages((prev) =>
+                            prev.map((m, j) => (j === i ? { ...m, reasoningOpen: (e.target as HTMLDetailsElement).open } : m))
+                          )
+                        }
+                        className="mb-2 pb-2 border-b border-zinc-200"
+                      >
+                        <summary className="text-xs text-zinc-500 cursor-pointer hover:text-zinc-700 font-medium">
+                          💭 深度思考
+                        </summary>
+                        <p className="mt-2 whitespace-pre-wrap break-words leading-relaxed text-sm text-zinc-500 italic">
+                          {msg.reasoning}
+                        </p>
                       </details>
                     )}
 

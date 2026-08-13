@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.3
     llm_max_tokens: int = 2048
 
+    # ── 深度思考（DeepSeek thinking 模式）──
+    # 开启后答案生成用思考模型流式返回推理链 reasoning_content，前端实时展示
+    llm_thinking_enabled: bool = True
+    llm_thinking_model: str = "deepseek-v4-flash"  # 返回 reasoning_content 的思考模型
+    llm_thinking_mode: str = "thinking"            # v4 模型的 thinking_mode 参数
+    llm_thinking_max_tokens: int = 8192            # 推理链较长，总 token 上限需加大
+
     # ── Embedding（硅基流动 BGE-M3）──
     embedding_api_key: str = ""
     embedding_base_url: str = "https://api.siliconflow.cn/v1"
