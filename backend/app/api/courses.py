@@ -1,10 +1,11 @@
 """课程管理 API"""
 
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from app.core.database import get_db
-from app.models.db_models import Course, Document, Chunk, gen_uuid
+from app.models.db_models import Course, Document, Chunk, Conversation, Message, FollowUp, gen_uuid
 from app.models.schemas import CourseCreate, CourseResponse
 
 router = APIRouter(prefix="/api/courses", tags=["课程管理"])
@@ -78,18 +79,40 @@ async def get_course(course_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.delete("/{course_id}")
 async def delete_course(course_id: str, db: AsyncSession = Depends(get_db)):
-    """删除课程及其所有文档和向量"""
+    """删除课程及其所有文档、向量、对话、追问和上传文件"""
     result = await db.execute(select(Course).where(Course.id == course_id))
     c = result.scalar_one_or_none()
     if not c:
         raise HTTPException(status_code=404, detail="课程不存在")
 
-    # 删除 Qdrant 中的向量
+    # 删除 Qdrant 向量 + 磁盘上传文件
     from app.rag.vector_store import delete_document_vectors
     docs_result = await db.execute(select(Document).where(Document.course_id == course_id))
     for doc in docs_result.scalars().all():
         delete_document_vectors(doc.id)
+        if doc.storage_path:
+            try:
+                p = Path(doc.storage_path).resolve()
+                if p.exists():
+                    p.unlink()
+                # 顺手清理可能已空的子目录
+                parent = p.parent
+                if parent.is_dir() and not any(parent.iterdir()):
+                    parent.rmdir()
+            except OSError:
+                pass
 
+    # 删除追问记录（外键引用消息/对话/课程）
+    await db.execute(delete(FollowUp).where(FollowUp.course_id == course_id))
+    # 删除消息（先于对话）
+    await db.execute(delete(Message).where(
+        Message.conversation_id.in_(
+            select(Conversation.id).where(Conversation.course_id == course_id)
+        )
+    ))
+    # 删除对话
+    await db.execute(delete(Conversation).where(Conversation.course_id == course_id))
+    # 删除课程（级联 documents → chunks）
     await db.delete(c)
     await db.flush()
     return {"message": "课程已删除", "course_id": course_id}

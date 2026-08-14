@@ -118,6 +118,7 @@ export default function Home() {
   const [dragTargetCourse, setDragTargetCourse] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingCourse, setDeletingCourse] = useState<string | null>(null);
   const [followUpModals, setFollowUpModals] = useState<FollowUpModalState[]>([]);
   const [followUpDialogs, setFollowUpDialogs] = useState<FollowUpDialogState[]>([]);
   const [selectionData, setSelectionData] = useState<{
@@ -237,6 +238,30 @@ export default function Home() {
       console.error("删除对话失败", e);
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  // 删除课程（连同文档、向量、对话、追问和上传文件，不可恢复）
+  async function deleteCourse(courseId: string) {
+    if (!window.confirm("删除此课程？\n课程、文档、对话和向量数据都会被移除，且不可恢复。")) return;
+    setDeletingCourse(courseId);
+    try {
+      const res = await fetch(`${API_BASE}/courses/${courseId}`, { method: "DELETE" });
+      if (!res.ok) {
+        console.error("删除课程失败", res.status);
+        return;
+      }
+      await fetchCourses();
+      if (selectedCourse === courseId) {
+        setSelectedCourse("");
+        setMessages([]);
+        setConversationId(null);
+        setConversations([]);
+      }
+    } catch (e) {
+      console.error("删除课程失败", e);
+    } finally {
+      setDeletingCourse(null);
     }
   }
 
@@ -762,7 +787,7 @@ export default function Home() {
                 {courses.map((c) => (
                   <div
                     key={c.id}
-                    className={`mb-1 rounded-lg transition-colors ${
+                    className={`group mb-1 rounded-lg transition-colors ${
                       dragTargetCourse === c.id ? "bg-blue-100 ring-2 ring-blue-400" : ""
                     }`}
                     onDragEnter={(e) => {
@@ -781,17 +806,30 @@ export default function Home() {
                     }}
                     onDrop={(e) => handleDrop(e, c.id)}
                   >
-                    <button
-                      onClick={() => {
-                        setSelectedCourse(c.id);
-                        setMessages([]);
-                        setConversationId(null);
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-zinc-200 text-zinc-700 transition-colors"
-                    >
-                      <div className="truncate">{c.name}</div>
-                      <div className="text-xs text-zinc-400">{c.document_count} 份文档</div>
-                    </button>
+                    <div className="flex items-center">
+                      <button
+                        onClick={() => {
+                          setSelectedCourse(c.id);
+                          setMessages([]);
+                          setConversationId(null);
+                        }}
+                        className="flex-1 text-left px-3 py-2 rounded-lg text-sm hover:bg-zinc-200 text-zinc-700 transition-colors"
+                      >
+                        <div className="truncate">{c.name}</div>
+                        <div className="text-xs text-zinc-400">{c.document_count} 份文档</div>
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteCourse(c.id);
+                        }}
+                        disabled={deletingCourse === c.id}
+                        className="px-2 mr-1 py-1 text-zinc-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity text-sm shrink-0"
+                        title="删除课程"
+                      >
+                        {deletingCourse === c.id ? "..." : "🗑"}
+                      </button>
+                    </div>
                     <div className="px-3 pb-1">
                       <label
                         className={`block w-full text-center text-xs py-1 rounded border border-dashed cursor-pointer transition-colors ${
