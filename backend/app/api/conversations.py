@@ -59,6 +59,7 @@ async def get_messages(conversation_id: str, db: AsyncSession = Depends(get_db))
                 "id": m.id,
                 "role": m.role,
                 "content": m.content,
+                "status": m.status,
                 "citations": m.citations,
                 "confidence": m.confidence,
                 "created_at": m.created_at.isoformat() if m.created_at else None,

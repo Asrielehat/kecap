@@ -56,7 +56,12 @@ class Settings(BaseSettings):
     # ── 文件上传 ──
     upload_dir: str = "./uploads"
     max_upload_size_mb: int = 50
-    allowed_extensions: list[str] = ["pdf", "ppt", "pptx", "doc", "docx", "md", "txt"]
+    embedding_batch_size: int = 32
+    api_timeout_seconds: float = 60.0
+    max_chat_workers: int = 4
+    hybrid_retrieval_enabled: bool = False
+    reranker_enabled: bool = False
+    allowed_extensions: list[str] = ["pdf", "pptx", "docx", "md", "txt"]
 
     # ── RAG 参数 ──
     chunk_size: int = 800

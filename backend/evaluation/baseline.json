@@ -1,0 +1,486 @@
+{
+  "summary": {
+    "mode": "offline_bm25_only",
+    "questions": 36,
+    "recall_at_3": 0.9833333333333333,
+    "correct_empty_rate": 1.0,
+    "mean_latency_ms": 0.10586111111111111,
+    "provider_calls": 0,
+    "provider_cost_cny": 0,
+    "citation_accuracy": null,
+    "note": "Offline retrieval metrics do not establish answer quality or gains over semantic retrieval."
+  },
+  "results": [
+    {
+      "question": "栈的后进先出是什么意思？",
+      "expected": [
+        "stack"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "queue",
+        "stack"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.797
+    },
+    {
+      "question": "LIFO 对应什么数据结构？",
+      "expected": [
+        "stack"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "index",
+        "stack",
+        "udp"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.101
+    },
+    {
+      "question": "队列为什么叫先进先出？",
+      "expected": [
+        "queue"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "bfs",
+        "queue",
+        "stack"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.096
+    },
+    {
+      "question": "FIFO 从哪里入队出队？",
+      "expected": [
+        "queue"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "queue"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.086
+    },
+    {
+      "question": "二分查找的前提是什么？",
+      "expected": [
+        "binary"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "binary"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.09
+    },
+    {
+      "question": "二分查找时间复杂度是多少？",
+      "expected": [
+        "binary"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "binary"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.094
+    },
+    {
+      "question": "广度优先搜索使用什么容器？",
+      "expected": [
+        "bfs"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "bfs",
+        "dfs"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.095
+    },
+    {
+      "question": "BFS 能解决哪种最短路径？",
+      "expected": [
+        "bfs"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "bfs",
+        "dfs"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.088
+    },
+    {
+      "question": "深度优先搜索怎样回溯？",
+      "expected": [
+        "dfs"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "bfs",
+        "dfs"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.088
+    },
+    {
+      "question": "DFS 使用栈还是队列？",
+      "expected": [
+        "dfs"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "bfs",
+        "dfs",
+        "queue"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.085
+    },
+    {
+      "question": "死锁有哪些必要条件？",
+      "expected": [
+        "deadlock"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "deadlock"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.087
+    },
+    {
+      "question": "循环等待与死锁有什么联系？",
+      "expected": [
+        "deadlock"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "deadlock"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.092
+    },
+    {
+      "question": "进程与线程有什么区别？",
+      "expected": [
+        "process"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "process"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.085
+    },
+    {
+      "question": "同一进程内线程共享什么？",
+      "expected": [
+        "process"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "process"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.089
+    },
+    {
+      "question": "分页中的页表做什么？",
+      "expected": [
+        "paging"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "paging"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.084
+    },
+    {
+      "question": "虚拟地址怎样通过页表映射？",
+      "expected": [
+        "paging"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "paging",
+        "process",
+        "tcp"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.091
+    },
+    {
+      "question": "ACID 包含哪些性质？",
+      "expected": [
+        "acid"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "acid"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.079
+    },
+    {
+      "question": "事务原子性是什么意思？",
+      "expected": [
+        "acid"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "acid"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.085
+    },
+    {
+      "question": "索引的代价有哪些？",
+      "expected": [
+        "index"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "index"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.085
+    },
+    {
+      "question": "为什么索引会增加更新成本？",
+      "expected": [
+        "index"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "index"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.09
+    },
+    {
+      "question": "TCP 如何处理丢包？",
+      "expected": [
+        "tcp"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "tcp"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.08
+    },
+    {
+      "question": "TCP 怎样保证有序传输？",
+      "expected": [
+        "tcp"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "binary",
+        "tcp",
+        "udp"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.086
+    },
+    {
+      "question": "UDP 是否保证可靠交付？",
+      "expected": [
+        "udp"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "tcp",
+        "udp"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.085
+    },
+    {
+      "question": "UDP 数据报是有连接的吗？",
+      "expected": [
+        "udp"
+      ],
+      "category": "direct",
+      "retrieved": [
+        "acid",
+        "index",
+        "udp"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.088
+    },
+    {
+      "question": "比较栈与队列的访问顺序",
+      "expected": [
+        "stack",
+        "queue"
+      ],
+      "category": "cross",
+      "retrieved": [
+        "bfs",
+        "stack",
+        "udp"
+      ],
+      "recall_at_3": 0.5,
+      "correct_empty": null,
+      "latency_ms": 0.09
+    },
+    {
+      "question": "比较 BFS 与 DFS 使用的容器",
+      "expected": [
+        "bfs",
+        "dfs"
+      ],
+      "category": "cross",
+      "retrieved": [
+        "bfs",
+        "dfs"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.087
+    },
+    {
+      "question": "TCP 和 UDP 的可靠性有什么区别",
+      "expected": [
+        "tcp",
+        "udp"
+      ],
+      "category": "cross",
+      "retrieved": [
+        "tcp",
+        "udp"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.091
+    },
+    {
+      "question": "再解释一下后进先出",
+      "expected": [
+        "stack"
+      ],
+      "category": "followup",
+      "retrieved": [
+        "queue",
+        "stack"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.085
+    },
+    {
+      "question": "为什么增加更新成本",
+      "expected": [
+        "index"
+      ],
+      "category": "followup",
+      "retrieved": [
+        "index"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.083
+    },
+    {
+      "question": "它为什么要求有序",
+      "expected": [
+        "binary"
+      ],
+      "category": "followup",
+      "retrieved": [
+        "acid",
+        "binary",
+        "tcp"
+      ],
+      "recall_at_3": 1.0,
+      "correct_empty": null,
+      "latency_ms": 0.081
+    },
+    {
+      "question": "如何制作草莓蛋糕",
+      "expected": [],
+      "category": "absent",
+      "retrieved": [],
+      "recall_at_3": null,
+      "correct_empty": true,
+      "latency_ms": 0.08
+    },
+    {
+      "question": "唐代诗人李白生平",
+      "expected": [],
+      "category": "absent",
+      "retrieved": [],
+      "recall_at_3": null,
+      "correct_empty": true,
+      "latency_ms": 0.08
+    },
+    {
+      "question": "明天上海天气预报",
+      "expected": [],
+      "category": "absent",
+      "retrieved": [],
+      "recall_at_3": null,
+      "correct_empty": true,
+      "latency_ms": 0.075
+    },
+    {
+      "question": "细胞有丝分裂的阶段",
+      "expected": [],
+      "category": "absent",
+      "retrieved": [],
+      "recall_at_3": null,
+      "correct_empty": true,
+      "latency_ms": 0.077
+    },
+    {
+      "question": "光合作用的化学方程式",
+      "expected": [],
+      "category": "absent",
+      "retrieved": [],
+      "recall_at_3": null,
+      "correct_empty": true,
+      "latency_ms": 0.084
+    },
+    {
+      "question": "如何学习小提琴",
+      "expected": [],
+      "category": "absent",
+      "retrieved": [],
+      "recall_at_3": null,
+      "correct_empty": true,
+      "latency_ms": 0.072
+    }
+  ]
+}

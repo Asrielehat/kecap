@@ -1,0 +1,310 @@
+{
+  "description": "人工编写的 36 题工程回归集；不代表真实课程效果。followup 已包含主题词，模糊主题锚定另由 API 测试覆盖。",
+  "corpus": [
+    {
+      "chunk_id": "stack",
+      "content": "栈采用后进先出 LIFO，入栈与出栈只在栈顶进行。",
+      "page_number": 1
+    },
+    {
+      "chunk_id": "queue",
+      "content": "队列采用先进先出 FIFO，在队尾入队，在队头出队。",
+      "page_number": 2
+    },
+    {
+      "chunk_id": "binary",
+      "content": "二分查找要求序列有序，每次缩小一半区间，时间复杂度 O(log n)。",
+      "page_number": 3
+    },
+    {
+      "chunk_id": "bfs",
+      "content": "广度优先搜索 BFS 使用队列逐层访问节点，适合无权图最短路径。",
+      "page_number": 4
+    },
+    {
+      "chunk_id": "dfs",
+      "content": "深度优先搜索 DFS 使用递归或栈沿路径深入，再回溯。",
+      "page_number": 5
+    },
+    {
+      "chunk_id": "deadlock",
+      "content": "死锁的必要条件是互斥、请求并保持、不可剥夺、循环等待。",
+      "page_number": 6
+    },
+    {
+      "chunk_id": "process",
+      "content": "进程是资源分配单位；线程是 CPU 调度单位，同一进程内线程共享地址空间。",
+      "page_number": 7
+    },
+    {
+      "chunk_id": "paging",
+      "content": "分页将虚拟地址分为页号与页内偏移，页表将虚拟页映射到物理页框。",
+      "page_number": 8
+    },
+    {
+      "chunk_id": "acid",
+      "content": "数据库事务 ACID 是原子性、一致性、隔离性、持久性。原子性要求操作全部成功或全部回滚。",
+      "page_number": 9
+    },
+    {
+      "chunk_id": "index",
+      "content": "数据库索引加快查询，但占用存储空间，并增加插入和更新的维护成本。",
+      "page_number": 10
+    },
+    {
+      "chunk_id": "tcp",
+      "content": "TCP 提供可靠有序的字节流，通过序号、确认和重传机制处理丢包。",
+      "page_number": 11
+    },
+    {
+      "chunk_id": "udp",
+      "content": "UDP 提供无连接的数据报传输，不保证可靠交付与顺序。",
+      "page_number": 12
+    }
+  ],
+  "questions": [
+    {
+      "question": "栈的后进先出是什么意思？",
+      "expected": [
+        "stack"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "LIFO 对应什么数据结构？",
+      "expected": [
+        "stack"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "队列为什么叫先进先出？",
+      "expected": [
+        "queue"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "FIFO 从哪里入队出队？",
+      "expected": [
+        "queue"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "二分查找的前提是什么？",
+      "expected": [
+        "binary"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "二分查找时间复杂度是多少？",
+      "expected": [
+        "binary"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "广度优先搜索使用什么容器？",
+      "expected": [
+        "bfs"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "BFS 能解决哪种最短路径？",
+      "expected": [
+        "bfs"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "深度优先搜索怎样回溯？",
+      "expected": [
+        "dfs"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "DFS 使用栈还是队列？",
+      "expected": [
+        "dfs"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "死锁有哪些必要条件？",
+      "expected": [
+        "deadlock"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "循环等待与死锁有什么联系？",
+      "expected": [
+        "deadlock"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "进程与线程有什么区别？",
+      "expected": [
+        "process"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "同一进程内线程共享什么？",
+      "expected": [
+        "process"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "分页中的页表做什么？",
+      "expected": [
+        "paging"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "虚拟地址怎样通过页表映射？",
+      "expected": [
+        "paging"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "ACID 包含哪些性质？",
+      "expected": [
+        "acid"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "事务原子性是什么意思？",
+      "expected": [
+        "acid"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "索引的代价有哪些？",
+      "expected": [
+        "index"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "为什么索引会增加更新成本？",
+      "expected": [
+        "index"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "TCP 如何处理丢包？",
+      "expected": [
+        "tcp"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "TCP 怎样保证有序传输？",
+      "expected": [
+        "tcp"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "UDP 是否保证可靠交付？",
+      "expected": [
+        "udp"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "UDP 数据报是有连接的吗？",
+      "expected": [
+        "udp"
+      ],
+      "category": "direct"
+    },
+    {
+      "question": "比较栈与队列的访问顺序",
+      "expected": [
+        "stack",
+        "queue"
+      ],
+      "category": "cross"
+    },
+    {
+      "question": "比较 BFS 与 DFS 使用的容器",
+      "expected": [
+        "bfs",
+        "dfs"
+      ],
+      "category": "cross"
+    },
+    {
+      "question": "TCP 和 UDP 的可靠性有什么区别",
+      "expected": [
+        "tcp",
+        "udp"
+      ],
+      "category": "cross"
+    },
+    {
+      "question": "再解释一下后进先出",
+      "expected": [
+        "stack"
+      ],
+      "category": "followup"
+    },
+    {
+      "question": "为什么增加更新成本",
+      "expected": [
+        "index"
+      ],
+      "category": "followup"
+    },
+    {
+      "question": "它为什么要求有序",
+      "expected": [
+        "binary"
+      ],
+      "category": "followup"
+    },
+    {
+      "question": "如何制作草莓蛋糕",
+      "expected": [],
+      "category": "absent"
+    },
+    {
+      "question": "唐代诗人李白生平",
+      "expected": [],
+      "category": "absent"
+    },
+    {
+      "question": "明天上海天气预报",
+      "expected": [],
+      "category": "absent"
+    },
+    {
+      "question": "细胞有丝分裂的阶段",
+      "expected": [],
+      "category": "absent"
+    },
+    {
+      "question": "光合作用的化学方程式",
+      "expected": [],
+      "category": "absent"
+    },
+    {
+      "question": "如何学习小提琴",
+      "expected": [],
+      "category": "absent"
+    }
+  ]
+}

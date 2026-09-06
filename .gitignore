@@ -5,6 +5,11 @@ __pycache__/
 dist/
 .venv/
 venv/
+.test-venv/
+lint-results.json
+frontend/.test-build/
+test-results/
+frontend/tsconfig.tsbuildinfo
 
 # Node / Next.js
 node_modules/

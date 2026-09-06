@@ -77,75 +77,30 @@ def _parse_docx(file_path: str) -> str:
 
 
 def smart_chunk(text: str, chunk_size: int = None, overlap: int = None) -> list[dict]:
-    """
-    智能分块 —— 按语义边界切分，而非简单按字数切断
-
-    策略:
-    1. 先按页面/幻灯片分隔符分段
-    2. 每段内按段落/标题边界切分
-    3. 相邻块保留 overlap 重叠，避免切断语义
-    """
-    chunk_size = chunk_size or settings.chunk_size
-    overlap = overlap or settings.chunk_overlap
-
-    # 按页面分隔符拆分，保留页面信息
-    page_pattern = re.compile(r'\[PAGE:(\d+)\]\n')
-    slide_pattern = re.compile(r'\[SLIDE:(\d+)\]\n')
-
-    # 统一用分段符标记；标记前后都用双换行隔离，使其独占一段——
-    # 否则标记与正文粘在同一段，re.match 命中标记后 continue 会把正文一起丢弃
-    text = page_pattern.sub(lambda m: f"\n\n{{PAGE:{m.group(1)}}}\n\n", text)
-    text = slide_pattern.sub(lambda m: f"\n\n{{SLIDE:{m.group(1)}}}\n\n", text)
-
-    paragraphs = text.split("\n\n")
+    """Page-contained chunks with a hard character bound and exact page metadata."""
+    chunk_size = settings.chunk_size if chunk_size is None else chunk_size
+    overlap = settings.chunk_overlap if overlap is None else overlap
+    if chunk_size < 1 or not 0 <= overlap < chunk_size:
+        raise ValueError("Require chunk_size > overlap >= 0")
+    sections = re.split(r"\[(?:PAGE|SLIDE):(\d+)\]\n", text)
+    pages = [(None, sections[0])]
+    pages.extend((int(sections[i]), sections[i + 1]) for i in range(1, len(sections), 2))
     chunks = []
-    current_chunk = ""
-    current_page = 0
-    chunk_page = 0  # 当前 chunk 的起始页码（引用标注"第 X 页"用）
-    chunk_index = 0
-
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
-            continue
-
-        # 检测页面标记
-        page_match = re.match(r'\{PAGE:(\d+)\}', para)
-        slide_match = re.match(r'\{SLIDE:(\d+)\}', para)
-        if page_match:
-            current_page = int(page_match.group(1))
-            continue
-        if slide_match:
-            current_page = int(slide_match.group(1))  # 幻灯片的"页码"
-            continue
-
-        # 如果加上当前段落会超过 chunk_size，则保存当前 chunk
-        if len(current_chunk) + len(para) > chunk_size and current_chunk:
-            chunks.append({
-                "id": str(uuid.uuid4()),
-                "content": current_chunk.strip(),
-                "chunk_index": chunk_index,
-                "page_number": chunk_page if chunk_page > 0 else None,
-            })
-            chunk_index += 1
-            # 保留 overlap 部分
-            overlap_text = current_chunk[-overlap:] if len(current_chunk) > overlap else current_chunk
-            current_chunk = overlap_text + "\n\n" + para
-            chunk_page = current_page  # 新 chunk 以当前段落页码为起始
-        else:
-            if current_chunk:
-                current_chunk += "\n\n" + para
-            else:
-                current_chunk = para
-                chunk_page = current_page  # 记录 chunk 起始页
-
-    # 保存最后一个 chunk
-    if current_chunk.strip():
-        chunks.append({
-            "id": str(uuid.uuid4()),
-            "content": current_chunk.strip(),
-            "chunk_index": chunk_index,
-            "page_number": chunk_page if chunk_page > 0 else None,
-        })
-
+    for page, content in pages:
+        content = content.strip()
+        start = 0
+        while start < len(content):
+            end = min(start + chunk_size, len(content))
+            if end < len(content):
+                boundary = max(content.rfind("\n", start + chunk_size // 2, end),
+                               content.rfind("。", start + chunk_size // 2, end))
+                if boundary >= 0:
+                    end = boundary + 1
+            piece = content[start:end].strip()
+            if piece:
+                chunks.append({"id": str(uuid.uuid4()), "content": piece,
+                               "chunk_index": len(chunks), "page_number": page, "page_end": page})
+            if end == len(content):
+                break
+            start = max(start + 1, end - overlap)
     return chunks

@@ -17,6 +17,8 @@ async def lifespan(app: FastAPI):
     await init_db()
     print("[Kecap] 数据库表初始化完成 (SQLite)")
     ensure_collection()
+    from app.api.upload import recover_uploads
+    await recover_uploads()
     print("[Kecap] Qdrant 集合就绪 (本地模式)")
     print(f"[Kecap] API 文档: http://localhost:8000/docs\n")
     yield

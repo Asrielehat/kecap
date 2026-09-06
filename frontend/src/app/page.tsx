@@ -4,107 +4,33 @@ import { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-interface Message {
-  id?: string;
-  role: "user" | "assistant";
-  content: string;
-  citations?: Citation[];
-  agentTrace?: AgentTraceStep[];
-  reasoning?: string;       // 深度思考推理链（流式累积，仅本次会话保留）
-  reasoningOpen?: boolean;  // 深度思考面板展开态（流式后保留，用户可自由收/放）
-  streaming?: boolean;   // 流式生成中：思考面板实时展开、隐藏"思考中"占位
-  traceOpen?: boolean;   // 思考面板展开态（流式后保留，用户可自由收/放）
-}
-
-/** Agent 运行轨迹单步：规划 / 检索轮次 / MCP 工具调用 / 兜底 / 自检 */
-interface AgentTraceStep {
-  step: number;
-  type: "plan" | "retrieval" | "tool" | "fallback" | "selfcheck";
-  query?: string;
-  top_k?: number;
-  hits?: number;
-  scores?: number[];
-  preview?: string;
-  content?: string;
-  sub_questions?: string[];
-  tool?: string;
-  args?: string;
-  ok?: boolean;
-  result_chars?: number;
-  note?: string;
-}
-
-interface Citation {
-  text: string;
-  document_name: string;
-  page?: number;
-  chunk_id: string;
-  score: number;
-}
-
-interface Course {
-  id: string;
-  name: string;
-  document_count: number;
-}
-
-interface ConversationItem {
-  id: string;
-  course_id: string;
-  title: string;
-  created_at: string;
-}
-
-interface FollowUpModalState {
-  id: string;
-  followUpId?: string; // 后端返回的 FollowUp 记录 ID，用于嵌套追问
-  selectedText: string;
-  contextParagraph: string;
-  messageId: string;
-  answer: string;
-  citations: Citation[];
-  loading: boolean;
-  x: number;
-  y: number;
-  zIndex: number;
-}
-
-// 对话框内的一轮问答（question 为 null 表示自动解释轮）
-interface FollowUpTurn {
-  id: string;               // 客户端 turn id（对话框内区分轮次）
-  followUpId?: string;      // 后端 FollowUp 记录 id（嵌套追问的 parent_follow_up_id 用这个）
-  question: string | null;  // 用户该轮的问题；自动解释轮为 null
-  answer: string;
-  citations: Citation[];
-  loading: boolean;
-}
-
-// 智能提问对话框：框选文字后打开，问答可无限叠加
-interface FollowUpDialogState {
-  id: string;
-  selectedText: string;     // 对话框锚点：主消息区选中的文字
-  contextParagraph: string;
-  messageId: string;        // 被追问的 assistant 消息 id（第一轮 POST 用）
-  turns: FollowUpTurn[];
-  x: number;
-  y: number;
-  zIndex: number;
-}
+import type { Message, AgentTraceStep, Course, ConversationItem, FollowUpModalState, FollowUpDialogState } from "../lib/types";
+import { API_BASE, apiJson } from "../lib/api";
+import { consumeStream } from "../lib/chat-stream";
+import { CitationList } from "../components/CitationList";
+import { UploadProgress } from "../components/UploadProgress";
+import { DraggableModal, DraggableDialog } from "../components/FollowUpWindows";
 
 function genId(): string {
   try { return crypto.randomUUID ? crypto.randomUUID() : String(Date.now()); }
   catch { return String(Date.now()) + "-" + Math.random().toString(36).slice(2, 10); }
 }
 
-// EXE/Docker 同源部署时页面由 FastAPI 提供（端口 8000），直接用相对路径 /api；
-// 否则（开发模式 :3000 或独立前端）回退到环境变量 / 本地默认地址。
-// 注意：不要依赖构建期 NEXT_PUBLIC_API_URL=/api —— Git Bash 会把 /api 误转成 E:/Git/api。
-const API_BASE =
-  typeof window !== "undefined" && window.location.port === "8000"
-    ? "/api"
-    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
-
 export default function Home() {
+  const activeRequest = useRef<AbortController | null>(null);
+  const viewEpoch = useRef(0);
+  const [generationStatus, setGenerationStatus] = useState("");
+  const [evidenceMode, setEvidenceMode] = useState<"strict" | "supplement">("supplement");
+  const [uploadLabel, setUploadLabel] = useState("");
+  function stopGeneration() {
+    activeRequest.current?.abort();
+    activeRequest.current = null;
+    viewEpoch.current++;
+    setMessages(prev => prev.map(m => m.streaming ? {...m, streaming: false, status: "interrupted", error: "已停止生成，可重新提问"} : m));
+    setLoading(false);
+    setGenerationStatus("");
+  }
+  useEffect(() => () => { activeRequest.current?.abort(); }, []);
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourse, setSelectedCourse] = useState<string>("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -157,10 +83,8 @@ export default function Home() {
   // 思考中文字轮播 + 耗时秒数
   useEffect(() => {
     if (loading) {
-      setThinkingStep(0);
-      setThinkingSecs(0);
       const interval = setInterval(() => {
-        setThinkingStep((prev) => (prev + 1) % thinkingMessages.length);
+        setThinkingStep((prev) => (prev + 1) % 4);
         setThinkingSecs((prev) => prev + 1);
       }, 1000);
       thinkingIntervalRef.current = interval;
@@ -200,36 +124,43 @@ export default function Home() {
   }
 
   async function loadConversation(convId: string) {
+    stopGeneration();
+    const epoch = viewEpoch.current;
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/conversations/${convId}/messages`);
       const data = await res.json();
+      if (epoch !== viewEpoch.current) return;
       setConversationId(data.conversation_id);
       setSelectedCourse(data.course_id);
       setMessages(
-        data.messages.map((m: any) => ({
+        data.messages.map((m: Message) => ({
           id: m.id,
           role: m.role,
           content: m.content,
           citations: m.citations,
+          status: m.status,
+          error: m.status && m.status !== "complete" ? "此回答未完成，可重新提问" : undefined,
         }))
       );
     } catch (e) {
       console.error("加载对话失败", e);
     } finally {
-      setLoading(false);
+      if (epoch === viewEpoch.current) setLoading(false);
     }
   }
 
   function startNewConversation() {
+    stopGeneration();
     setMessages([]);
     setConversationId(null);
   }
 
   async function deleteConversation(convId: string) {
+    stopGeneration();
     setDeletingId(convId);
     try {
-      await fetch(`${API_BASE}/conversations/${convId}`, { method: "DELETE" });
+      await apiJson(`/conversations/${convId}`, { method: "DELETE" });
       setConversations((prev) => prev.filter((c) => c.id !== convId));
       if (conversationId === convId) {
         startNewConversation();
@@ -243,6 +174,7 @@ export default function Home() {
 
   // 删除课程（连同文档、向量、对话、追问和上传文件，不可恢复）
   async function deleteCourse(courseId: string) {
+    stopGeneration();
     if (!window.confirm("删除此课程？\n课程、文档、对话和向量数据都会被移除，且不可恢复。")) return;
     setDeletingCourse(courseId);
     try {
@@ -267,6 +199,7 @@ export default function Home() {
 
   // 删除单条消息（用户输错 / LLM 答偏时，防止污染后续上下文）
   async function deleteMessage(msgIndex: number) {
+    stopGeneration();
     const msg = messages[msgIndex];
     if (!msg.id || !conversationId) return;
     if (!window.confirm("删除这条消息？\n用户输入或 AI 回答都会被移除，之后的问答不再受它影响。")) return;
@@ -305,11 +238,19 @@ export default function Home() {
   }
 
   async function handleUpload(courseId: string, file: File) {
+    if (uploading) return;
     setUploading(courseId);
+    const uploadId = crypto.randomUUID();
+    setUploadLabel("正在上传 " + file.name);
+    const labels: Record<string, string> = {uploading: "上传中", parsing: "解析中", indexing: "建立索引", saving: "保存中", success: "完成", failed: "失败", cleanup_pending: "清理中"};
+    const timer = setInterval(() => {
+      void apiJson<{status: string; progress: number}>(`/documents/jobs/${uploadId}`).then(job => setUploadLabel(`${file.name} · ${labels[job.status] || job.status} ${job.progress}%`)).catch(() => undefined);
+    }, 1000);
     try {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("course_id", courseId);
+      formData.append("upload_id", uploadId);
       const res = await fetch(`${API_BASE}/documents/upload`, {
         method: "POST",
         body: formData,
@@ -322,98 +263,63 @@ export default function Home() {
       } else {
         alert(`上传失败: ${data.detail || JSON.stringify(data)}`);
       }
-    } catch (e: any) {
-      alert(`上传出错: ${e.message || "网络错误，请确认后端已启动"}`);
+    } catch (e) {
+      alert(`上传出错: ${e instanceof Error ? e.message : "网络错误，请确认后端已启动"}`);
       console.error("上传失败", e);
     } finally {
+      clearInterval(timer);
+      setUploadLabel("");
       setUploading(null);
     }
   }
 
   async function handleSend() {
     if (!input.trim() || !selectedCourse || loading) return;
-
     const question = input.trim();
-    const targetIndex = messages.length + 1;   // 先推用户消息，再推 assistant 占位
-    setInput("");
-    setLoading(true);
-    // 一次性推两条（React 自动批处理）：流式中即见实时内容，无"思考中"闪烁
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", content: question },
-      { role: "assistant", content: "", citations: [], agentTrace: [], reasoning: "", streaming: true },
-    ]);
-
-    // 原地更新第 targetIndex 条（流式期间不重建整个消息数组）
-    const patchAssist = (patch: Partial<Message>) =>
-      setMessages((prev) => prev.map((m, i) => (i === targetIndex ? { ...m, ...patch } : m)));
-    // 用户消息在 targetIndex-1（从 citations 事件拿到后端 id 后回填，用于删除）
-    const patchUser = (patch: Partial<Message>) =>
-      setMessages((prev) => prev.map((m, i) => (i === targetIndex - 1 ? { ...m, ...patch } : m)));
-
-    let savedId = "";
+    const course = selectedCourse;
+    const epoch = ++viewEpoch.current;
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    const userId = genId(), assistantId = genId();
+    const current = () => viewEpoch.current === epoch && !controller.signal.aborted;
+    const patch = (id: string, value: Partial<Message>) => {
+      if (current()) setMessages(prev => prev.map(m => m.clientId === id ? {...m, ...value} : m));
+    };
+    setInput(""); setThinkingStep(0); setThinkingSecs(0); setLoading(true); setGenerationStatus("正在连接");
+    setMessages(prev => [...prev, {clientId: userId, role: "user", content: question},
+      {clientId: assistantId, role: "assistant", content: "", streaming: true, citations: []}]);
+    let answer = "", reasoning = "", savedId = "", failure = "";
+    let trace: AgentTraceStep[] = [];
     try {
-      const res = await fetch(`${API_BASE}/chat/ask/stream`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          course_id: selectedCourse,
-          question,
-          conversation_id: conversationId,
-        }),
+      const response = await fetch(API_BASE + "/chat/ask/stream", {
+        method: "POST", headers: {"Content-Type": "application/json"}, signal: controller.signal,
+        body: JSON.stringify({course_id: course, question, conversation_id: conversationId, evidence_mode: evidenceMode}),
       });
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-
-      // ── 消费 SSE：思考步骤实时蹦出，答案逐字流式渲染 ──
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      let answer = "";
-      let reasoning = "";
-      let trace: AgentTraceStep[] = [];
-      let citations: Citation[] = [];
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const frames = buf.split("\n\n");
-        buf = frames.pop() ?? "";   // 帧尾可能不完整，留到下一轮
-        for (const frame of frames) {
-          const line = frame.split("\n").find((l) => l.startsWith("data: "));
-          if (!line) continue;
-          let evt: any;
-          try {
-            evt = JSON.parse(line.slice(6));
-          } catch {
-            continue;
-          }
-          if (evt.type === "trace") {
-            trace = [...trace, evt.data];
-            patchAssist({ agentTrace: trace });
-          } else if (evt.type === "reasoning") {
-            reasoning += evt.data;
-            patchAssist({ reasoning });
-          } else if (evt.type === "token") {
-            answer += evt.data;
-            patchAssist({ content: answer });
-          } else if (evt.type === "citations") {
-            citations = evt.data;
-            if (evt.conversation_id) setConversationId(evt.conversation_id);
-            if (evt.user_message_id) patchUser({ id: evt.user_message_id });
-            patchAssist({ citations });
-          } else if (evt.type === "done") {
-            savedId = evt.data?.assistant_message_id || "";
-          }
+      if (!response.ok || !response.body) throw new Error("请求失败 (" + response.status + ")");
+      await consumeStream(response.body, event => {
+        if (!current()) return;
+        if (event.type === "session") {
+          setConversationId(event.conversation_id); patch(userId, {id: event.user_message_id});
+        } else if (event.type === "token") { answer += event.data; patch(assistantId, {content: answer}); }
+        else if (event.type === "reasoning") { reasoning += event.data; patch(assistantId, {reasoning}); }
+        else if (event.type === "trace") { trace = [...trace, event.data]; patch(assistantId, {agentTrace: trace}); }
+        else if (event.type === "citations") patch(assistantId, {citations: event.data});
+        else if (event.type === "status") setGenerationStatus(event.data);
+        else if (event.type === "error") { failure = event.data; patch(assistantId, {error: failure, status: "failed"}); }
+        else if (event.type === "done") {
+          savedId = event.data.assistant_message_id;
+          patch(assistantId, {id: savedId || undefined, status: event.data.status});
+          if (event.data.status !== "complete" && !failure) failure = "回答未完成或保存失败，请重试";
         }
-      }
-    } catch (e) {
-      patchAssist({ content: "❌ 请求失败，请检查后端服务是否启动。" });
+      });
+    } catch (error) {
+      failure = error instanceof Error ? error.message : "网络错误，请重试";
     } finally {
-      patchAssist({ id: savedId || undefined, streaming: false });
-      setLoading(false);
-      // 刷新对话列表（标题可能更新）
-      if (selectedCourse) fetchConversations(selectedCourse);
+      if (current()) {
+        patch(assistantId, {id: savedId || undefined, streaming: false, error: failure || undefined});
+        setLoading(false); setGenerationStatus(""); activeRequest.current = null;
+        void fetchConversations(course);
+      }
     }
   }
 
@@ -454,7 +360,7 @@ export default function Home() {
       }
       if (!paragraph) paragraph = text;
 
-      const messageId = (msg as any).id || "";
+      const messageId = msg.id || "";
 
       setSelectionData({ text, paragraph, messageId, x: e.clientX, y: e.clientY });
     }, 10);
@@ -482,7 +388,7 @@ export default function Home() {
     ]);
 
     // 构建请求体：顶层追问传 message_id，嵌套追问传 parent_follow_up_id
-    const body: any = {
+    const body: Record<string, unknown> = {
       selected_text: text,
       context_paragraph: paragraph,
       course_id: selectedCourse,
@@ -578,7 +484,7 @@ export default function Home() {
     const { dialogId, turnId, text, paragraph, messageId, parentFollowUpId, question, history } = params;
     if (!selectedCourse) return;
 
-    const body: any = {
+    const body: Record<string, unknown> = {
       selected_text: text,
       context_paragraph: paragraph,
       course_id: selectedCourse,
@@ -809,6 +715,7 @@ export default function Home() {
                     <div className="flex items-center">
                       <button
                         onClick={() => {
+                          stopGeneration();
                           setSelectedCourse(c.id);
                           setMessages([]);
                           setConversationId(null);
@@ -866,6 +773,7 @@ export default function Home() {
             <div className="p-3 border-b border-zinc-200">
               <button
                 onClick={() => {
+                  stopGeneration();
                   setSelectedCourse("");
                   setMessages([]);
                   setConversationId(null);
@@ -1195,7 +1103,7 @@ export default function Home() {
                           ul: ({ children }) => <ul className="list-disc list-inside my-1.5 space-y-0.5">{children}</ul>,
                           ol: ({ children }) => <ol className="list-decimal list-inside my-1.5 space-y-0.5">{children}</ol>,
                           li: ({ children }) => <li className="text-sm text-zinc-700">{children}</li>,
-                          code: ({ className, children, ...props }: any) => {
+                          code: ({ className, children }) => {
                             const isInline = !className;
                             return isInline
                               ? <code className="bg-zinc-200 text-zinc-800 px-1 py-0.5 rounded text-xs font-mono">{children}</code>
@@ -1216,32 +1124,10 @@ export default function Home() {
                       </ReactMarkdown>
                     </div>
 
-                    {msg.citations && msg.citations.length > 0 && (
-                      <details className="mt-3 pt-3 border-t border-zinc-300">
-                        <summary className="text-xs text-zinc-500 cursor-pointer hover:text-zinc-700 font-medium">
-                          📖 参考来源（{msg.citations.length} 条）
-                        </summary>
-                        <div className="mt-2 space-y-2">
-                          {msg.citations.map((cit, j) => (
-                            <div
-                              key={j}
-                              className="bg-white rounded-lg p-2 border border-zinc-200"
-                            >
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-xs font-medium text-blue-600">
-                                  📄 {cit.document_name}
-                                  {cit.page ? ` · 第 ${cit.page} 页` : ""}
-                                </span>
-                                <span className="text-xs text-zinc-400">
-                                  相关度 {(cit.score * 100).toFixed(0)}%
-                                </span>
-                              </div>
-                              <p className="text-xs text-zinc-600 line-clamp-3">{cit.text}</p>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    )}
+                    {msg.error && <div role="alert" className="text-sm text-red-600 mt-2">{msg.error}
+                      <button className="ml-3 underline" onClick={() => setInput(messages.slice(0, i).reverse().find(m => m.role === "user")?.content || "")}>重新提问</button>
+                    </div>}
+                    <CitationList citations={msg.citations || []} />
                   </div>
                 )}
               </div>
@@ -1290,7 +1176,7 @@ export default function Home() {
               style={{ zIndex: topZIndex + 1, left: Math.min(selectionData.x, window.innerWidth - 120), top: selectionData.y + 20 }}
             >
               <span className="text-[11px] text-zinc-500 max-w-[200px] truncate">
-                追问: "{selectionData.text.slice(0, 30)}{selectionData.text.length > 30 ? "…" : ""}"
+                追问: &quot;{selectionData.text.slice(0, 30)}{selectionData.text.length > 30 ? "…" : ""}&quot;
               </span>
               <button
                 onClick={(e) => { e.stopPropagation(); handleFollowUp(); }}
@@ -1309,8 +1195,16 @@ export default function Home() {
           <div ref={chatEndRef} />
         </div>
 
+        <UploadProgress label={uploadLabel} />
         {/* 输入区域 */}
         <div className="px-6 py-4 border-t border-zinc-200 bg-white shrink-0">
+          <div className="max-w-4xl mx-auto mb-2 flex gap-3 text-sm">
+            <select aria-label="回答依据" value={evidenceMode} onChange={e => setEvidenceMode(e.target.value as "strict" | "supplement")} disabled={loading}>
+              <option value="supplement">资料优先，标明补充知识</option><option value="strict">严格依据资料</option>
+            </select>
+            {loading && <button onClick={stopGeneration} className="text-red-600">停止生成</button>}
+            <span role="status">{generationStatus}</span>
+          </div>
           <div className="flex gap-3 max-w-4xl mx-auto">
             <input
               type="text"
@@ -1334,7 +1228,7 @@ export default function Home() {
             </button>
           </div>
           <p className="text-xs text-zinc-400 text-center mt-2">
-            答案基于已上传课程资料生成 · 每句标注来源 · 对话自动保存到左侧历史记录
+            引用可查看原文 · 补充知识单独标明 · 未完成的回答不会进入后续上下文
           </p>
         </div>
       </main>
@@ -1365,489 +1259,6 @@ export default function Home() {
           onInnerFollowUp={handleDialogInnerFollowUp}
         />
       ))}
-    </div>
-  );
-}
-
-// ── 共享拖拽窗口 hook（弹窗 / 对话框共用）──
-function useDraggableWindow(initialX: number, initialY: number, width: number) {
-  const [pos, setPos] = useState({ x: initialX, y: initialY });
-  const [dragging, setDragging] = useState(false);
-  const dragRef = useRef({ startX: 0, startY: 0, startLeft: 0, startTop: 0 });
-
-  // 窗口初始位置变更时同步（多弹窗各自来自状态）
-  useEffect(() => {
-    setPos({ x: initialX, y: initialY });
-  }, [initialX, initialY]);
-
-  useEffect(() => {
-    if (!dragging) return;
-    function handleMouseMove(e: MouseEvent) {
-      const dx = e.clientX - dragRef.current.startX;
-      const dy = e.clientY - dragRef.current.startY;
-      setPos({
-        x: Math.max(0, Math.min(window.innerWidth - width, dragRef.current.startLeft + dx)),
-        y: Math.max(0, Math.min(window.innerHeight - 100, dragRef.current.startTop + dy)),
-      });
-    }
-    function handleMouseUp() { setDragging(false); }
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [dragging, width]);
-
-  function handleTitleMouseDown(e: React.MouseEvent, onFocus?: () => void) {
-    if (onFocus) onFocus();
-    setDragging(true);
-    dragRef.current = { startX: e.clientX, startY: e.clientY, startLeft: pos.x, startTop: pos.y };
-    e.preventDefault();
-  }
-
-  return { pos, handleTitleMouseDown };
-}
-
-// ── 可拖拽追问弹窗子组件 ──
-function DraggableModal({
-  modal,
-  topZIndex,
-  onClose,
-  onFocus,
-  onFollowUp,
-}: {
-  modal: FollowUpModalState;
-  topZIndex: number;
-  onClose: () => void;
-  onFocus: () => void;
-  onFollowUp: (text: string, paragraph: string, parentFollowUpId: string) => void;
-}) {
-  const [pos, setPos] = useState({ x: modal.x, y: modal.y });
-  const [dragging, setDragging] = useState(false);
-  const dragRef = useRef({ startX: 0, startY: 0, startLeft: 0, startTop: 0 });
-  const [innerSelection, setInnerSelection] = useState<{
-    text: string; paragraph: string; x: number; y: number;
-  } | null>(null);
-
-  // 窗口大小变化时保持弹窗在可视范围内
-  useEffect(() => {
-    setPos({ x: modal.x, y: modal.y });
-  }, [modal.x, modal.y]);
-
-  // 弹窗内文字选中检测
-  function handleInnerMouseUp(e: React.MouseEvent) {
-    setTimeout(() => {
-      const sel = window.getSelection();
-      if (!sel || !sel.toString().trim()) {
-        setInnerSelection(null);
-        return;
-      }
-      const text = sel.toString().trim();
-      if (text.length < 2 || text.length > 500) {
-        setInnerSelection(null);
-        return;
-      }
-      // 获取所在段落的文本
-      const anchorNode = sel.anchorNode;
-      let paragraph = text;
-      if (anchorNode) {
-        const parent = anchorNode.parentElement;
-        if (parent) {
-          paragraph = (parent.textContent || text).substring(0, 800);
-        }
-      }
-      setInnerSelection({ text, paragraph, x: e.clientX, y: e.clientY });
-    }, 10);
-  }
-
-  function handleInnerFollowUp() {
-    if (!innerSelection) return;
-    onFollowUp(innerSelection.text, innerSelection.paragraph, modal.followUpId || modal.id);
-    setInnerSelection(null);
-  }
-
-  function handleMouseDown(e: React.MouseEvent) {
-    setDragging(true);
-    onFocus();
-    dragRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      startLeft: pos.x,
-      startTop: pos.y,
-    };
-    e.preventDefault();
-  }
-
-  useEffect(() => {
-    if (!dragging) return;
-    function handleMouseMove(e: MouseEvent) {
-      const dx = e.clientX - dragRef.current.startX;
-      const dy = e.clientY - dragRef.current.startY;
-      setPos({
-        x: Math.max(0, Math.min(window.innerWidth - 420, dragRef.current.startLeft + dx)),
-        y: Math.max(0, Math.min(window.innerHeight - 100, dragRef.current.startTop + dy)),
-      });
-    }
-    function handleMouseUp() { setDragging(false); }
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [dragging]);
-
-  const width = 400;
-  const maxHeight = 480;
-
-  return (
-    <div
-      className="fixed bg-white rounded-xl shadow-2xl border border-zinc-300 flex flex-col overflow-hidden"
-      style={{
-        left: pos.x,
-        top: pos.y,
-        width,
-        maxHeight,
-        zIndex: modal.zIndex,
-      }}
-      onMouseDown={onFocus}
-    >
-      {/* 标题栏（拖拽把手） */}
-      <div
-        className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-zinc-200 cursor-move select-none shrink-0"
-        onMouseDown={handleMouseDown}
-      >
-        <span className="text-sm">🔍</span>
-        <span className="text-xs font-medium text-zinc-700 truncate flex-1">
-          追问: {modal.selectedText.slice(0, 40)}{modal.selectedText.length > 40 ? "…" : ""}
-        </span>
-        <button
-          onClick={(e) => { e.stopPropagation(); onClose(); }}
-          className="text-zinc-400 hover:text-zinc-600 hover:bg-zinc-200 rounded-full w-5 h-5 flex items-center justify-center text-xs shrink-0 transition-colors"
-        >
-          ×
-        </button>
-      </div>
-
-      {/* 正文区 */}
-      <div className="flex-1 overflow-auto px-4 py-3">
-        {modal.loading ? (
-          <div className="flex items-center gap-2.5 py-6">
-            <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin shrink-0" />
-            <span className="text-xs text-zinc-400">正在从课件中检索解释…</span>
-          </div>
-        ) : (
-          <div
-            className="text-sm leading-relaxed markdown-body"
-            onMouseUp={handleInnerMouseUp}
-            style={{ userSelect: "text", cursor: "text" }}>
-            {/* 弹窗内追问浮动按钮 */}
-            {innerSelection && (
-              <div
-                className="fixed bg-white border border-purple-400 shadow-lg rounded-lg px-3 py-2 flex items-center gap-2"
-                style={{ zIndex: topZIndex + 2, left: Math.min(innerSelection.x, window.innerWidth - 120), top: innerSelection.y + 20 }}
-              >
-                <span className="text-[11px] text-zinc-500 max-w-[200px] truncate">
-                  追问: "{innerSelection.text.slice(0, 25)}{innerSelection.text.length > 25 ? "…" : ""}"
-                </span>
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleInnerFollowUp(); }}
-                  className="px-2.5 py-1 text-xs bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors shrink-0"
-                >
-                  追问
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); setInnerSelection(null); }}
-                  className="text-zinc-300 hover:text-zinc-500 text-xs shrink-0"
-                >
-                  ×
-                </button>
-              </div>
-            )}
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                h1: ({ children }) => <h1 className="text-sm font-semibold text-zinc-800 mt-2 mb-1">{children}</h1>,
-                h2: ({ children }) => <h2 className="text-xs font-semibold text-zinc-800 mt-2 mb-1">{children}</h2>,
-                h3: ({ children }) => <h3 className="text-xs font-medium text-zinc-700 mt-1.5 mb-0.5">{children}</h3>,
-                p: ({ children }) => <p className="text-xs text-zinc-700 my-1.5 leading-relaxed">{children}</p>,
-                strong: ({ children }) => <strong className="font-semibold text-zinc-800">{children}</strong>,
-                ul: ({ children }) => <ul className="list-disc list-inside my-1 space-y-0.5 text-xs">{children}</ul>,
-                ol: ({ children }) => <ol className="list-decimal list-inside my-1 space-y-0.5 text-xs">{children}</ol>,
-                li: ({ children }) => <li className="text-xs text-zinc-700">{children}</li>,
-                code: ({ className, children, ...props }: any) => {
-                  const isInline = !className;
-                  return isInline
-                    ? <code className="bg-zinc-200 text-zinc-800 px-1 py-0.5 rounded text-[11px] font-mono">{children}</code>
-                    : <code className="block bg-zinc-800 text-zinc-100 text-[11px] p-2.5 rounded-lg my-1.5 overflow-x-auto font-mono whitespace-pre-wrap">{children}</code>;
-                },
-                pre: ({ children }) => <>{children}</>,
-                a: ({ href, children }) => <a href={href} target="_blank" rel="noopener" className="text-blue-600 underline">{children}</a>,
-                blockquote: ({ children }) => <blockquote className="border-l-3 border-blue-400 bg-blue-50 px-2.5 py-1 my-1.5 text-xs text-zinc-600 rounded-r">{children}</blockquote>,
-                hr: () => <hr className="border-zinc-200 my-2" />,
-                em: ({ children }) => <em className="italic text-zinc-600">{children}</em>,
-                table: ({ children }) => <div className="overflow-x-auto my-1.5"><table className="w-full text-[11px] border-collapse">{children}</table></div>,
-                th: ({ children }) => <th className="border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 text-left font-medium text-zinc-700">{children}</th>,
-                td: ({ children }) => <td className="border border-zinc-300 px-1.5 py-0.5 text-zinc-600">{children}</td>,
-              }}
-            >
-              {modal.answer}
-            </ReactMarkdown>
-
-            {modal.citations && modal.citations.length > 0 && (
-              <details className="mt-3 pt-2 border-t border-zinc-200">
-                <summary className="text-[11px] text-zinc-400 cursor-pointer hover:text-zinc-600">
-                  参考来源（{modal.citations.length} 条）
-                </summary>
-                <div className="mt-1.5 space-y-1.5">
-                  {modal.citations.map((cit, j) => (
-                    <div key={j} className="bg-zinc-50 rounded-md p-2 border border-zinc-100">
-                      <div className="flex items-center justify-between mb-0.5">
-                        <span className="text-[11px] font-medium text-blue-600">
-                          {cit.document_name}{cit.page ? ` · 第${cit.page}页` : ""}
-                        </span>
-                        <span className="text-[10px] text-zinc-400">
-                          {(cit.score * 100).toFixed(0)}%
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-zinc-500 line-clamp-2">{cit.text}</p>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── 智能提问对话框子组件（聊天式：问答无限叠加 + 底部输入框）──
-const dialogMarkdownComponents = {
-  h1: ({ children }: any) => <h1 className="text-sm font-semibold text-zinc-800 mt-2 mb-1">{children}</h1>,
-  h2: ({ children }: any) => <h2 className="text-xs font-semibold text-zinc-800 mt-2 mb-1">{children}</h2>,
-  h3: ({ children }: any) => <h3 className="text-xs font-medium text-zinc-700 mt-1.5 mb-0.5">{children}</h3>,
-  p: ({ children }: any) => <p className="text-xs text-zinc-700 my-1.5 leading-relaxed">{children}</p>,
-  strong: ({ children }: any) => <strong className="font-semibold text-zinc-800">{children}</strong>,
-  ul: ({ children }: any) => <ul className="list-disc list-inside my-1 space-y-0.5 text-xs">{children}</ul>,
-  ol: ({ children }: any) => <ol className="list-decimal list-inside my-1 space-y-0.5 text-xs">{children}</ol>,
-  li: ({ children }: any) => <li className="text-xs text-zinc-700">{children}</li>,
-  code: ({ className, children, ...props }: any) => {
-    const isInline = !className;
-    return isInline
-      ? <code className="bg-zinc-200 text-zinc-800 px-1 py-0.5 rounded text-[11px] font-mono">{children}</code>
-      : <code className="block bg-zinc-800 text-zinc-100 text-[11px] p-2.5 rounded-lg my-1.5 overflow-x-auto font-mono whitespace-pre-wrap">{children}</code>;
-  },
-  pre: ({ children }: any) => <>{children}</>,
-  a: ({ href, children }: any) => <a href={href} target="_blank" rel="noopener" className="text-blue-600 underline">{children}</a>,
-  blockquote: ({ children }: any) => <blockquote className="border-l-3 border-blue-400 bg-blue-50 px-2.5 py-1 my-1.5 text-xs text-zinc-600 rounded-r">{children}</blockquote>,
-  hr: () => <hr className="border-zinc-200 my-2" />,
-  em: ({ children }: any) => <em className="italic text-zinc-600">{children}</em>,
-  table: ({ children }: any) => <div className="overflow-x-auto my-1.5"><table className="w-full text-[11px] border-collapse">{children}</table></div>,
-  th: ({ children }: any) => <th className="border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 text-left font-medium text-zinc-700">{children}</th>,
-  td: ({ children }: any) => <td className="border border-zinc-300 px-1.5 py-0.5 text-zinc-600">{children}</td>,
-};
-
-function DraggableDialog({
-  dialog,
-  topZIndex,
-  onClose,
-  onFocus,
-  onSendQuestion,
-  onInnerFollowUp,
-}: {
-  dialog: FollowUpDialogState;
-  topZIndex: number;
-  onClose: () => void;
-  onFocus: () => void;
-  onSendQuestion: (dialogId: string, question: string) => void;
-  onInnerFollowUp: (turnId: string, text: string, paragraph: string) => void;
-}) {
-  const [input, setInput] = useState("");
-  const [innerSelection, setInnerSelection] = useState<{
-    turnId: string; text: string; paragraph: string; x: number; y: number;
-  } | null>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const { pos, handleTitleMouseDown } = useDraggableWindow(dialog.x, dialog.y, 440);
-
-  const lastTurn = dialog.turns[dialog.turns.length - 1];
-  const isSending = !!lastTurn?.loading;
-
-  // 新问答进来时自动滚动到底
-  useEffect(() => {
-    bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
-  }, [dialog.turns]);
-
-  // 对话框内某条回答的框选检测（带 turnId，用于嵌套追问的父引用）
-  function handleTurnMouseUp(turn: FollowUpTurn, e: React.MouseEvent) {
-    setTimeout(() => {
-      const sel = window.getSelection();
-      if (!sel || !sel.toString().trim()) {
-        setInnerSelection(null);
-        return;
-      }
-      const text = sel.toString().trim();
-      if (text.length < 2 || text.length > 500) {
-        setInnerSelection(null);
-        return;
-      }
-      const anchorNode = sel.anchorNode;
-      let paragraph = text;
-      if (anchorNode) {
-        const parent = anchorNode.parentElement;
-        if (parent) {
-          paragraph = (parent.textContent || text).substring(0, 800);
-        }
-      }
-      setInnerSelection({ turnId: turn.id, text, paragraph, x: e.clientX, y: e.clientY });
-    }, 10);
-  }
-
-  function handleInnerFollowUp() {
-    if (!innerSelection) return;
-    onInnerFollowUp(innerSelection.turnId, innerSelection.text, innerSelection.paragraph);
-    setInnerSelection(null);
-  }
-
-  function handleSend() {
-    if (!input.trim() || isSending) return;
-    onSendQuestion(dialog.id, input.trim());
-    setInput("");
-  }
-
-  function handleInputKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleSend();
-    }
-  }
-
-  return (
-    <div
-      className="fixed bg-white rounded-xl shadow-2xl border border-zinc-300 flex flex-col overflow-hidden"
-      style={{ left: pos.x, top: pos.y, width: 440, height: 520, zIndex: dialog.zIndex }}
-      onMouseDown={onFocus}
-    >
-      {/* 标题栏（拖拽把手） */}
-      <div
-        className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-zinc-200 cursor-move select-none shrink-0"
-        onMouseDown={(e) => handleTitleMouseDown(e, onFocus)}
-      >
-        <span className="text-sm">💬</span>
-        <span className="text-xs font-medium text-zinc-700 truncate flex-1">
-          追问: {dialog.selectedText.slice(0, 40)}{dialog.selectedText.length > 40 ? "…" : ""}
-        </span>
-        <button
-          onClick={(e) => { e.stopPropagation(); onClose(); }}
-          className="text-zinc-400 hover:text-zinc-600 hover:bg-zinc-200 rounded-full w-5 h-5 flex items-center justify-center text-xs shrink-0 transition-colors"
-        >
-          ×
-        </button>
-      </div>
-
-      {/* 问答滚动区 */}
-      <div ref={bodyRef} className="flex-1 overflow-auto px-3 py-3 space-y-3">
-        {dialog.turns.map((turn) => (
-          <div key={turn.id} className="space-y-1.5">
-            {/* 用户问题气泡（自动解释轮无 question，不渲染） */}
-            {turn.question && (
-              <div className="flex justify-end">
-                <div className="max-w-[85%] bg-blue-600 text-white rounded-xl px-3 py-2">
-                  <p className="text-xs whitespace-pre-wrap leading-relaxed">{turn.question}</p>
-                </div>
-              </div>
-            )}
-            {turn.loading ? (
-              <div className="flex items-center gap-2.5 py-3">
-                <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin shrink-0" />
-                <span className="text-xs text-zinc-400">正在从课件中检索…</span>
-              </div>
-            ) : (
-              <div className="flex justify-start">
-                <div className="max-w-[85%] bg-zinc-100 text-zinc-800 rounded-xl px-3 py-2">
-                  <div
-                    className="text-xs leading-relaxed markdown-body"
-                    onMouseUp={(e) => handleTurnMouseUp(turn, e)}
-                    style={{ userSelect: "text", cursor: "text" }}
-                  >
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={dialogMarkdownComponents}>
-                      {turn.answer}
-                    </ReactMarkdown>
-                    {turn.citations.length > 0 && (
-                      <details className="mt-2 pt-1.5 border-t border-zinc-200">
-                        <summary className="text-[11px] text-zinc-400 cursor-pointer hover:text-zinc-600">
-                          参考来源（{turn.citations.length} 条）
-                        </summary>
-                        <div className="mt-1.5 space-y-1.5">
-                          {turn.citations.map((cit, j) => (
-                            <div key={j} className="bg-white rounded-md p-2 border border-zinc-100">
-                              <div className="flex items-center justify-between mb-0.5">
-                                <span className="text-[11px] font-medium text-blue-600">
-                                  {cit.document_name}{cit.page ? ` · 第${cit.page}页` : ""}
-                                </span>
-                                <span className="text-[10px] text-zinc-400">
-                                  {(cit.score * 100).toFixed(0)}%
-                                </span>
-                              </div>
-                              <p className="text-[11px] text-zinc-500 line-clamp-2">{cit.text}</p>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
-
-        {/* 对话框内嵌套追问紫色气泡 */}
-        {innerSelection && (
-          <div
-            className="fixed bg-white border border-purple-400 shadow-lg rounded-lg px-3 py-2 flex items-center gap-2"
-            style={{ zIndex: topZIndex + 2, left: Math.min(innerSelection.x, window.innerWidth - 120), top: innerSelection.y + 20 }}
-          >
-            <span className="text-[11px] text-zinc-500 max-w-[200px] truncate">
-              追问: "{innerSelection.text.slice(0, 25)}{innerSelection.text.length > 25 ? "…" : ""}"
-            </span>
-            <button
-              onClick={(e) => { e.stopPropagation(); handleInnerFollowUp(); }}
-              className="px-2.5 py-1 text-xs bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors shrink-0"
-            >
-              追问
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); setInnerSelection(null); }}
-              className="text-zinc-300 hover:text-zinc-500 text-xs shrink-0"
-            >
-              ×
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* 底部输入框 */}
-      <div className="px-3 py-2 border-t border-zinc-200 shrink-0 flex items-center gap-2 bg-white">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleInputKeyDown}
-          placeholder={isSending ? "思考中，稍候…" : "继续提问（Enter 发送）"}
-          disabled={isSending}
-          className="flex-1 px-3 py-1.5 text-xs border border-zinc-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-zinc-100 disabled:text-zinc-400"
-        />
-        <button
-          onClick={handleSend}
-          disabled={!input.trim() || isSending}
-          className="px-3.5 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 shrink-0"
-        >
-          发送
-        </button>
-      </div>
     </div>
   );
 }

@@ -8,10 +8,12 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.core.database import get_db
+from app.core.database import get_db, async_session
 from app.core.config import get_settings
 from app.core.trace import TraceRecorder
-from app.models.db_models import Conversation, Message, Document, FollowUp, gen_uuid
+from app.core.work import run_blocking, cancel_event, checkpoint, evidence_mode
+from concurrent.futures import TimeoutError as FutureTimeout
+from app.models.db_models import Course, Conversation, Message, Document, FollowUp, gen_uuid
 from app.models.schemas import ChatRequest, ChatResponse, Citation, FollowUpRequest, FollowUpResponse
 from app.rag.retriever import retrieve_with_rerank, retrieve_follow_up
 from app.rag.generator import generate_answer, generate_answer_stream, generate_follow_up, llm_client
@@ -28,6 +30,7 @@ def _retrieve_docs(
 
     trace（可选）：out-param，检索智能体每轮检索 / 兜底情况就地追加轨迹条目。
     """
+    checkpoint()
     if needs_full:
         return []
     if settings.agent_planning_enabled:
@@ -42,6 +45,7 @@ def _retrieve_docs(
             })
         best: dict[str, dict] = {}
         for sq in sub_questions:
+            checkpoint()
             hits = retrieve_with_rerank(sq, course_id)
             if trace is not None:
                 trace.append({
@@ -117,7 +121,7 @@ async def fetch_conversation_messages(
              .order_by(Message.created_at.asc()))
         result = await db.execute(q)
         rows = result.scalars().all()
-    return [{"role": m.role, "content": m.content} for m in rows]
+    return [{"role": m.role, "content": m.content} for m in rows if m.status == "complete"]
 
 
 @router.post("/ask", response_model=ChatResponse)
@@ -131,10 +135,13 @@ async def ask(request: ChatRequest, db: AsyncSession = Depends(get_db)):
     4. 保存对话记录
     """
 
+    evidence_mode.set(request.evidence_mode)
+    if not await db.get(Course, request.course_id):
+        raise HTTPException(404, "课程不存在")
     # ── 获取或创建会话 ──
     if request.conversation_id:
         result = await db.execute(
-            select(Conversation).where(Conversation.id == request.conversation_id)
+            select(Conversation).where(Conversation.id == request.conversation_id, Conversation.course_id == request.course_id)
         )
         conversation = result.scalar_one_or_none()
         if not conversation:
@@ -184,12 +191,13 @@ async def ask(request: ChatRequest, db: AsyncSession = Depends(get_db)):
         docs = {d.id: d.filename for d in docs_result.scalars().all()}
 
         # 检索：agent 开启时由 LLM 自主多轮检索（换词重查），否则硬编码单次检索
-        retrieved_docs = _retrieve_docs(retrieval_question, request.course_id, needs_full, trace)
+        retrieved_docs = await run_blocking(_retrieve_docs, retrieval_question, request.course_id, needs_full, trace)
+        retrieved_docs = [doc for doc in retrieved_docs if doc["document_id"] in docs]
         for doc in retrieved_docs:
             doc["document_name"] = docs.get(doc["document_id"], "未知文档")
 
     # ── 生成答案（透传 mode；MCP 工具调用轨迹追加进 trace）──
-    result = generate_answer(
+    result = await run_blocking(generate_answer,
         request.question, retrieved_docs, conversation_history, mode=request.mode, trace=trace,
     )
 
@@ -220,6 +228,7 @@ async def ask(request: ChatRequest, db: AsyncSession = Depends(get_db)):
             text=c["text"],
             document_name=c["document_name"],
             page=c.get("page"),
+            page_end=c.get("page_end"),
             chunk_id=c["chunk_id"],
             score=c["score"],
         )
@@ -244,17 +253,20 @@ async def ask_follow_up(request: FollowUpRequest, db: AsyncSession = Depends(get
     顶层追问: message_id 指向主对话消息
     嵌套追问: parent_follow_up_id 指向父追问记录（追问弹窗里的追问）
     """
+    conversation = await db.get(Conversation, request.conversation_id)
+    if not conversation or conversation.course_id != request.course_id:
+        raise HTTPException(404, "会话不存在")
     # 校验：至少需要一个父引用
     if not request.message_id and not request.parent_follow_up_id:
         raise HTTPException(status_code=400, detail="message_id 或 parent_follow_up_id 至少需要一个")
 
     # 校验父引用存在
     if request.message_id:
-        msg_result = await db.execute(select(Message).where(Message.id == request.message_id))
+        msg_result = await db.execute(select(Message).where(Message.id == request.message_id, Message.conversation_id == request.conversation_id))
         if not msg_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="消息不存在")
     if request.parent_follow_up_id:
-        fu_result = await db.execute(select(FollowUp).where(FollowUp.id == request.parent_follow_up_id))
+        fu_result = await db.execute(select(FollowUp).where(FollowUp.id == request.parent_follow_up_id, FollowUp.conversation_id == request.conversation_id))
         if not fu_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="父追问不存在")
 
@@ -265,7 +277,7 @@ async def ask_follow_up(request: FollowUpRequest, db: AsyncSession = Depends(get
     docs = {d.id: d.filename for d in docs_result.scalars().all()}
 
     # 锚点检索
-    retrieved_docs = retrieve_follow_up(
+    retrieved_docs = await run_blocking(retrieve_follow_up,
         request.selected_text,
         request.context_paragraph,
         request.course_id,
@@ -274,7 +286,7 @@ async def ask_follow_up(request: FollowUpRequest, db: AsyncSession = Depends(get
         doc["document_name"] = docs.get(doc["document_id"], "未知文档")
 
     # 生成追问回答（上下文隔离，不读主对话历史）
-    result = generate_follow_up(
+    result = await run_blocking(generate_follow_up,
         request.selected_text,
         request.context_paragraph,
         retrieved_docs,
@@ -301,6 +313,7 @@ async def ask_follow_up(request: FollowUpRequest, db: AsyncSession = Depends(get
             text=c["text"],
             document_name=c["document_name"],
             page=c.get("page"),
+            page_end=c.get("page_end"),
             chunk_id=c["chunk_id"],
             score=c["score"],
         )
@@ -323,10 +336,12 @@ async def ask_stream(request: ChatRequest, db: AsyncSession = Depends(get_db)):
     流式 RAG 答疑 —— SSE 逐字推送，体验更好
     """
 
+    if not await db.get(Course, request.course_id):
+        raise HTTPException(404, "课程不存在")
     # ── 获取会话和历史消息（同上面非流式版本）──
     if request.conversation_id:
         result = await db.execute(
-            select(Conversation).where(Conversation.id == request.conversation_id)
+            select(Conversation).where(Conversation.id == request.conversation_id, Conversation.course_id == request.course_id)
         )
         conversation = result.scalar_one_or_none()
         if not conversation:
@@ -380,120 +395,95 @@ async def ask_stream(request: ChatRequest, db: AsyncSession = Depends(get_db)):
     # 若不先 commit，事件循环里保存回复的新会话会撞上 SQLite 单写锁（database is locked）
     await db.commit()
 
-    # ── 实时轨迹通道：阻塞的检索+生成跑工作线程 → asyncio.Queue → SSE ──
-    queue: asyncio.Queue = asyncio.Queue()
+    # Bounded queue and worker pool; disconnect stops later model/tool stages.
+    queue: asyncio.Queue = asyncio.Queue(maxsize=64)
+    stopped = threading.Event()
     trace = TraceRecorder()
     loop = asyncio.get_running_loop()
 
-    def push(kind: str, payload):
-        # asyncio.Queue 非线程安全，跨线程写入必须回到事件循环线程
-        loop.call_soon_threadsafe(queue.put_nowait, (kind, payload))
+    def push(kind, payload):
+        checkpoint()
+        future = asyncio.run_coroutine_threadsafe(queue.put((kind, payload)), loop)
+        while True:
+            try:
+                future.result(timeout=.25)
+                return
+            except FutureTimeout:
+                if stopped.is_set():
+                    future.cancel()
+                    raise InterruptedError("生成已停止")
 
-    # 每完成一轮检索/工具调用，trace.append 即实时推给 SSE
     trace.listen(lambda step: push("trace", step))
 
     def run_pipeline():
-        """工作线程：检索 + 生成答案，逐步 push 到队列（不阻塞事件循环）"""
+        cancel_event.set(stopped)
+        evidence_mode.set(request.evidence_mode)
         try:
-            # 检索：agent 开启时逐轮实时推 trace（换词重查）
+            checkpoint()
+            push("status", "检索中")
             docs = _retrieve_docs(retrieval_question, request.course_id, needs_full, trace)
+            docs = [doc for doc in docs if doc["document_id"] in docs_map]
             for doc in docs:
                 doc["document_name"] = docs_map.get(doc["document_id"], "未知文档")
-
-            # 置信度（同 generate_answer 公式）
-            if docs:
-                scores = [d.get("rerank_score", d.get("score", 0)) for d in docs]
-                confidence = round(max(scores) * 0.7 + (sum(scores) / len(scores)) * 0.3, 4)
-            else:
-                confidence = 0.0
-
-            # 引文元数据（答案流开始前发）
-            citations_meta = [
-                {
-                    "text": doc["content"][:200],
-                    "document_name": doc.get("document_name", "未知文档"),
-                    "page": doc.get("page_number"),
-                    "chunk_id": doc.get("chunk_id", ""),
-                    "score": doc.get("rerank_score", doc.get("score", 0)),
-                }
-                for doc in docs
-            ]
-            push("citations", {
-                "citations": citations_meta,
-                "conversation_id": conversation.id,
-                "confidence": confidence,
-                # 刚保存的 user 消息 id：前端据此能删除刚发错的输入
-                "user_message_id": user_msg.id,
-            })
-
-            # 答案：MCP 工具轮次实时推 trace，推理链(reasoning)/答案(token) 实时推
-            for kind, text in generate_answer_stream(
-                request.question, docs, conversation_history, mode=request.mode, trace=trace,
-            ):
-                push(kind, text)
-        except Exception as e:
-            print(f"[ask_stream] 流水线失败: {e}", flush=True)
-            push("error", str(e))
-        finally:
+            citations = [{"text": doc["content"][:200], "document_name": doc["document_name"],
+                          "page": doc.get("page_number"), "page_end": doc.get("page_end"),
+                          "chunk_id": doc["chunk_id"], "score": doc.get("score", 0)} for doc in docs]
+            push("citations", citations)
+            push("status", "生成与核验中" if settings.answer_selfcheck_enabled else "生成中")
+            for kind, value in generate_answer_stream(request.question, docs, conversation_history,
+                                                      mode=request.mode, trace=trace):
+                push(kind, value)
             push("end", None)
-
-    threading.Thread(target=run_pipeline, daemon=True).start()
+        except InterruptedError:
+            pass
+        except Exception:
+            if not stopped.is_set():
+                push("error", "生成失败，请检查模型服务配置后重试")
 
     async def event_stream():
-        full_answer = ""
-        citations_meta: list[dict] = []
-        confidence = 0.0
+        full_answer, citations, status = "", [], "interrupted"
+        saved_id = ""
+        task = asyncio.create_task(run_blocking(run_pipeline))
+        def frame(kind, data, **extra):
+            return "data: " + json.dumps({"type": kind, "data": data, **extra}, ensure_ascii=False) + "\n\n"
         try:
+            yield frame("session", {}, conversation_id=conversation.id, user_message_id=user_msg.id)
             while True:
-                kind, payload = await queue.get()
-                if kind == "trace":
-                    yield f"data: {json.dumps({'type': 'trace', 'data': payload}, ensure_ascii=False)}\n\n"
-                elif kind == "citations":
-                    citations_meta = payload["citations"]
-                    confidence = payload.get("confidence", 0.0)
-                    yield f"data: {json.dumps({'type': 'citations', 'data': citations_meta, 'conversation_id': payload['conversation_id'], 'user_message_id': payload.get('user_message_id')}, ensure_ascii=False)}\n\n"
-                elif kind == "reasoning":
-                    # 深度思考推理链：仅实时转发，不并入答案正文、不落库
-                    yield f"data: {json.dumps({'type': 'reasoning', 'data': payload}, ensure_ascii=False)}\n\n"
-                elif kind == "token":
+                try:
+                    kind, payload = await asyncio.wait_for(queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                if kind == "end":
+                    status = "complete"
+                    break
+                if kind == "error":
+                    status = "failed"
+                    yield frame(kind, payload)
+                    break
+                if kind == "token":
                     full_answer += payload
-                    yield f"data: {json.dumps({'type': 'token', 'data': payload}, ensure_ascii=False)}\n\n"
-                elif kind == "error":
-                    yield f"data: {json.dumps({'type': 'error', 'data': payload}, ensure_ascii=False)}\n\n"
-                    break
-                elif kind == "end":
-                    break
+                if kind == "citations":
+                    citations = payload
+                yield frame(kind, payload)
         finally:
-            # 出错/中断也保存已产生的部分答案
+            stopped.set()
+            # Do not cancel the worker future: it holds its slot until the active HTTP call exits.
+            task.add_done_callback(lambda done: done.exception() if not done.cancelled() else None)
+            async def save_partial():
+                async with async_session() as session:
+                    if not await session.get(Conversation, conversation.id):
+                        return ""
+                    message = Message(id=gen_uuid(), conversation_id=conversation.id, role="assistant",
+                                      content=full_answer, citations=citations, confidence=0, status=status)
+                    session.add(message)
+                    await session.commit()
+                    return message.id
             try:
-                async with async_session() as save_session:
-                    assistant_msg = Message(
-                        id=gen_uuid(),
-                        conversation_id=conversation.id,
-                        role="assistant",
-                        content=full_answer,
-                        citations=citations_meta,
-                        confidence=confidence,
-                    )
-                    save_session.add(assistant_msg)
-                    await save_session.commit()
-                    saved_id = assistant_msg.id
-            except Exception as e:
-                print(f"[ask_stream] 保存回复失败: {e}", flush=True)
-                saved_id = ""
-        # 结束信号（携带 assistant_message_id 供前端反馈定位）
-        yield f"data: {json.dumps({'type': 'done', 'data': {'assistant_message_id': saved_id}}, ensure_ascii=False)}\n\n"
+                saved_id = await asyncio.shield(save_partial())
+            except Exception:
+                status = "failed"
+        yield frame("done", {"assistant_message_id": saved_id, "status": status})
 
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-# 需要在这里导入 async_session for stream saving
-from app.core.database import async_session
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

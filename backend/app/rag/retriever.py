@@ -5,7 +5,9 @@ from typing import Optional
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 from app.core.config import get_settings
-from app.rag.vector_store import embed_texts, get_search_client
+from app.rag.vector_store import embed_texts, get_search_client, vector_lock
+from app.rag.lexical import bm25, reciprocal_rank_fusion
+from app.core.work import checkpoint
 
 settings = get_settings()
 
@@ -44,46 +46,61 @@ def hybrid_search(
     score_threshold: float = None,
 ) -> list[dict]:
     """
-    混合检索（向量相似度召回）
-
-    目前用向量检索作为主召回，后续可扩展 BM25 关键词并行检索 + 融合排序
+    默认使用向量相似度召回；启用配置后增加 BM25 与 RRF 融合。
 
     返回: [{chunk_id, content, document_id, page_number, score, ...}, ...]
     """
     top_k = top_k or settings.retrieval_top_k
-    score_threshold = score_threshold or settings.retrieval_score_threshold
+    score_threshold = settings.retrieval_score_threshold if score_threshold is None else score_threshold
 
+    checkpoint()
     # Query 向量化
     query_embeddings = embed_texts([query])
     query_vector = query_embeddings[0]
 
     # 向量相似度检索 (Qdrant v1.18+ API)
     qdrant_client = get_search_client()
-    results = qdrant_client.query_points(
-        collection_name=settings.qdrant_collection,
-        query=query_vector,
-        query_filter=Filter(
-            must=[FieldCondition(key="course_id", match=MatchValue(value=course_id))]
-        ) if course_id else None,
-        limit=top_k,
-        score_threshold=score_threshold,
-        with_payload=True,
-    )
+    with vector_lock:
+        results = qdrant_client.query_points(
+            collection_name=settings.qdrant_collection,
+            query=query_vector,
+            query_filter=Filter(
+                must=[FieldCondition(key="course_id", match=MatchValue(value=course_id))]
+            ) if course_id else None,
+            limit=top_k,
+            score_threshold=score_threshold,
+            with_payload=True,
+        )
 
     # query_points 返回 QueryResponse，通过 .points 获取列表
     scored_points = results.points if hasattr(results, 'points') else results
-    return [
+    semantic = [
         {
             "chunk_id": hit.payload.get("chunk_id"),
             "qdrant_point_id": hit.id,
             "content": hit.payload.get("content", ""),
             "document_id": hit.payload.get("document_id"),
             "page_number": hit.payload.get("page_number"),
+            "page_end": hit.payload.get("page_end"),
             "course_id": hit.payload.get("course_id"),
             "score": round(hit.score, 4),
         }
         for hit in scored_points
     ]
+    if not settings.hybrid_retrieval_enabled:
+        return semantic
+    corpus, offset = [], None
+    while True:
+        checkpoint()
+        with vector_lock:
+            points, offset = qdrant_client.scroll(
+                collection_name=settings.qdrant_collection,
+                scroll_filter=Filter(must=[FieldCondition(key="course_id", match=MatchValue(value=course_id))]),
+                limit=256, offset=offset, with_payload=True, with_vectors=False)
+        corpus.extend({**p.payload, "qdrant_point_id": p.id} for p in points)
+        if offset is None:
+            break
+    return reciprocal_rank_fusion(semantic, bm25(query, corpus, top_k), top_k=top_k)
 
 
 def rerank(query: str, documents: list[dict], top_k: int = None) -> list[dict]:
@@ -102,12 +119,14 @@ def rerank(query: str, documents: list[dict], top_k: int = None) -> list[dict]:
     if len(documents) <= top_k:
         return documents
 
-    reranker = _get_reranker()
-
-    # 当前 Reranker（BGE-Reranker-v2-m3）对中文学术文本排序效果不稳定
-    # 直接用向量相似度排序更可靠，Reranker 暂时跳过
-    documents.sort(key=lambda d: d.get("score", 0), reverse=True)
-    return documents[:top_k]
+    if settings.reranker_enabled:
+        checkpoint()
+        model = _get_reranker()
+        if model is not None:
+            scores = model.predict([(query, d["content"]) for d in documents])
+            ranked = [{**doc, "rerank_score": float(score)} for doc, score in zip(documents, scores)]
+            return sorted(ranked, key=lambda d: d["rerank_score"], reverse=True)[:top_k]
+    return sorted(documents, key=lambda d: d.get("fusion_score", d.get("score", 0)), reverse=True)[:top_k]
 
 
 def expand_query(query: str) -> list[str]:
@@ -168,7 +187,7 @@ def retrieve_follow_up(
             if cid not in all_results or r["score"] > all_results[cid]["score"]:
                 all_results[cid] = r
 
-    documents = sorted(all_results.values(), key=lambda d: d["score"], reverse=True)
+    documents = sorted(all_results.values(), key=lambda d: d.get("fusion_score", d["score"]), reverse=True)
     return documents[:5]
 
 
@@ -182,7 +201,7 @@ def retrieve_with_rerank(
     完整检索链路：Query 扩展 → 混合检索 → 合并去重 → 重排序
     """
     top_k = top_k or settings.retrieval_top_k
-    score_threshold = score_threshold or settings.retrieval_score_threshold
+    score_threshold = settings.retrieval_score_threshold if score_threshold is None else score_threshold
 
     # 1. Query 扩展
     queries = expand_query(query)
@@ -197,7 +216,7 @@ def retrieve_with_rerank(
             if cid not in all_results or r["score"] > all_results[cid]["score"]:
                 all_results[cid] = r
 
-    documents = sorted(all_results.values(), key=lambda d: d["score"], reverse=True)
+    documents = sorted(all_results.values(), key=lambda d: d.get("fusion_score", d["score"]), reverse=True)
 
     # 3. 重排序
     documents = rerank(query, documents)

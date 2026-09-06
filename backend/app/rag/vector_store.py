@@ -17,6 +17,10 @@ from qdrant_client.models import (
 )
 from openai import OpenAI
 from app.core.config import get_settings
+from app.core.work import checkpoint
+from threading import RLock
+
+vector_lock = RLock()
 
 settings = get_settings()
 
@@ -27,24 +31,28 @@ _embedding_client = None
 
 def _get_qdrant() -> QdrantClient:
     global _qdrant_client
-    if _qdrant_client is None:
-        if settings.qdrant_url:
-            # Docker 模式：连接 Qdrant 容器
-            _qdrant_client = QdrantClient(url=settings.qdrant_url)
-        else:
-            # 本地模式：文件存储
-            Path(settings.qdrant_path).mkdir(parents=True, exist_ok=True)
-            _qdrant_client = QdrantClient(path=settings.qdrant_path)
+    with vector_lock:
+        if _qdrant_client is None:
+            if settings.qdrant_url:
+                # Docker 模式：连接 Qdrant 容器
+                _qdrant_client = QdrantClient(url=settings.qdrant_url)
+            else:
+                # 本地模式：文件存储
+                Path(settings.qdrant_path).mkdir(parents=True, exist_ok=True)
+                _qdrant_client = QdrantClient(path=settings.qdrant_path)
     return _qdrant_client
 
 
 def _get_embedding_client() -> OpenAI:
     global _embedding_client
-    if _embedding_client is None:
-        _embedding_client = OpenAI(
-            api_key=settings.embedding_api_key,
-            base_url=settings.embedding_base_url,
-        )
+    with vector_lock:
+        if _embedding_client is None:
+            _embedding_client = OpenAI(
+                api_key=settings.embedding_api_key,
+                base_url=settings.embedding_base_url,
+                timeout=settings.api_timeout_seconds,
+                max_retries=1,
+            )
     return _embedding_client
 
 
@@ -67,11 +75,17 @@ def ensure_collection():
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """批量文本向量化 —— 调用硅基流动 BGE-M3"""
     client = _get_embedding_client()
-    resp = client.embeddings.create(
-        model=settings.embedding_model,
-        input=texts,
-    )
-    return [d.embedding for d in resp.data]
+    result = []
+    batch_size = max(1, settings.embedding_batch_size)
+    for start in range(0, len(texts), batch_size):
+        checkpoint()
+        batch = texts[start:start + batch_size]
+        resp = client.embeddings.create(model=settings.embedding_model, input=batch)
+        vectors = [d.embedding for d in sorted(resp.data, key=lambda d: d.index)]
+        if len(vectors) != len(batch):
+            raise ValueError("Embedding 返回数量与输入不一致")
+        result.extend(vectors)
+    return result
 
 
 def get_search_client() -> QdrantClient:
@@ -79,10 +93,22 @@ def get_search_client() -> QdrantClient:
     return _get_qdrant()
 
 
-def upsert_chunks(chunks: list[dict], course_id: str, document_id: str) -> int:
+def upsert_chunks(chunks: list[dict], course_id: str, document_id: str, progress=None) -> int:
     """将分块文本向量化并存入 Qdrant"""
     client = _get_qdrant()
-    ensure_collection()
+    with vector_lock:
+        ensure_collection()
+
+    batch_size = max(1, settings.embedding_batch_size)
+    for start in range(0, len(chunks), batch_size):
+        _upsert_batch(chunks[start:start + batch_size], course_id, document_id)
+        if progress:
+            progress(min(1, (start + batch_size) / len(chunks)))
+    return len(chunks)
+
+
+def _upsert_batch(chunks, course_id, document_id):
+    client = _get_qdrant()
 
     texts = [chunk["content"] for chunk in chunks]
     embeddings = embed_texts(texts)
@@ -101,22 +127,20 @@ def upsert_chunks(chunks: list[dict], course_id: str, document_id: str) -> int:
                 "content": chunk["content"],
                 "chunk_index": chunk["chunk_index"],
                 "page_number": chunk.get("page_number"),
+                "page_end": chunk.get("page_end"),
             },
         ))
 
-    client.upsert(
-        collection_name=settings.qdrant_collection,
-        points=points,
-    )
+    with vector_lock:
+        client.upsert(collection_name=settings.qdrant_collection, points=points)
     return len(points)
 
 
 def delete_document_vectors(document_id: str):
     """删除指定文档的所有向量"""
     client = _get_qdrant()
-    client.delete(
-        collection_name=settings.qdrant_collection,
-        points_selector=Filter(
-            must=[FieldCondition(key="document_id", match=MatchValue(value=document_id))]
-        ),
-    )
+    with vector_lock:
+        if not client.collection_exists(settings.qdrant_collection):
+            return
+        client.delete(collection_name=settings.qdrant_collection,
+                      points_selector=Filter(must=[FieldCondition(key="document_id", match=MatchValue(value=document_id))]))

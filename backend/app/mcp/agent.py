@@ -7,6 +7,7 @@
 import json
 
 from app.core.config import get_settings
+from app.core.work import checkpoint
 from app.mcp.client import mcp_manager
 
 settings = get_settings()
@@ -65,6 +66,7 @@ def run_tool_rounds(
     answer: str | None = None   # 模型停止调工具时直接给出的结论（智能体作答）
     try:
         for _ in range(max(1, max_steps or settings.mcp_max_steps)):
+            checkpoint()
             resp = llm_client.chat.completions.create(
                 model=settings.llm_model,
                 messages=loop_messages,

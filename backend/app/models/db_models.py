@@ -66,6 +66,7 @@ class Conversation(Base):
 
 
 class Message(Base):
+    status: Mapped[str] = mapped_column(String(20), default="complete", server_default="complete")
     __tablename__ = "messages"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)

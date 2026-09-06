@@ -5,8 +5,9 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # 接收 build-time 环境变量（Next.js 会在构建时内联 NEXT_PUBLIC_*）
-ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api
+ARG NEXT_PUBLIC_API_URL=/api
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV BACKEND_INTERNAL_URL=http://backend:8000
 
 # 先复制依赖文件（利用缓存）
 COPY package.json package-lock.json* ./

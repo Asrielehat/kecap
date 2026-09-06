@@ -8,10 +8,8 @@ services:
   # 1. 向量数据库 —— Qdrant
   # ────────────────────────────
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.12.2
     container_name: kecap-qdrant
-    ports:
-      - "6333:6333"   # REST API
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
@@ -24,7 +22,7 @@ services:
     container_name: kecap-postgres
     environment:
       POSTGRES_USER: kecap
-      POSTGRES_PASSWORD: kecap123
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: kecap
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -45,7 +43,7 @@ services:
       - "8000:8000"
     environment:
       # ── 数据库（Docker 下用 PostgreSQL）──
-      DATABASE_URL_OVERRIDE: "postgresql+asyncpg://kecap:kecap123@postgres:5432/kecap"
+      DATABASE_URL_OVERRIDE: "postgresql+asyncpg://kecap:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/kecap"
       # ── Qdrant（Docker 下连接容器）──
       QDRANT_URL: "http://qdrant:6333"
       QDRANT_COLLECTION: "course_materials"
@@ -76,12 +74,12 @@ services:
     build:
       context: ./frontend
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api}
     container_name: kecap-frontend
     ports:
       - "3000:3000"
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api}
     depends_on:
       - backend
     restart: unless-stopped

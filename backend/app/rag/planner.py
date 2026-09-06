@@ -8,6 +8,7 @@ import json
 import re
 
 from app.core.config import get_settings
+from app.core.work import checkpoint
 
 settings = get_settings()
 
@@ -47,6 +48,7 @@ def plan_sub_questions(question: str, llm_client, trace: list[dict] | None = Non
     """
     subs: list[str] = []
     try:
+        checkpoint()
         resp = llm_client.chat.completions.create(
             model=settings.llm_model,
             messages=[

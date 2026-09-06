@@ -10,11 +10,13 @@
 
 Students upload course materials (textbooks, slides, notes), and the assistant provides **accurate, traceable** AI Q&A and adaptive practice based on RAG (Retrieval-Augmented Generation).
 
+![Kecap main interface](docs/images/main-interface.png)
+
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | Next.js 14 + Tailwind CSS |
+| Frontend | Next.js 16 + React 19 + Tailwind CSS 4 |
 | Backend | Python FastAPI |
 | LLM | DeepSeek V3 API |
 | Embedding | SiliconFlow BGE-M3 |
@@ -26,7 +28,7 @@ Students upload course materials (textbooks, slides, notes), and the assistant p
 
 ### 1. Download
 
-👉 **[Download Kecap v1.1.0 (Windows 64-bit, 68.7 MB)](https://github.com/Asrielehat/kecap/releases/download/v1.1.0/Kecap-v1.1.0-win64.zip)**
+👉 **[Download the latest Windows release](https://github.com/Asrielehat/kecap/releases/latest)**
 
 Or visit the [Releases page](https://github.com/Asrielehat/kecap/releases) for the latest version.
 
@@ -182,7 +184,9 @@ kecap/
 ## Features
 
 ### 💬 RAG Q&A
-Ask questions about your course materials. The system retrieves relevant chunks, reranks them, and generates answers with inline citations.
+Ask questions about your course materials. The default pipeline uses semantic retrieval and generates answers with inline citations. Optional BM25 fusion and Cross-encoder reranking can be enabled after evaluation.
+
+Choose **Strict sources** when an answer must stay within uploaded materials, or **Sources + supplemental knowledge** when general background is useful. Supplemental knowledge is marked separately.
 
 ### 🔍 Follow-up (Context-Isolated)
 Select any text in an answer to ask a follow-up question in a draggable modal. Follow-ups are **context-isolated** — they don't pollute the main conversation history. Supports **nested follow-up chains** (ask follow-ups within follow-ups).
@@ -200,7 +204,7 @@ Delete any user or AI message — along with its follow-up chain — to fix inpu
 Drop a `SKILL.md` into `backend/skills/<skill-name>/` to inject custom behavior (name / description / triggers / force mode / full-history) into the LLM.
 
 ### 📚 Document Management
-Upload PDF, PPT, DOCX, and MD files. Documents are auto-parsed, chunked, and vectorized for retrieval.
+Upload PDF, PPTX, DOCX, MD, and TXT files. Uploads use generated storage names, enforce the configured size limit, expose processing progress, and recover interrupted indexing jobs. Scanned PDFs need OCR before upload.
 
 ### 📝 Conversation History
 All Q&A sessions are saved. Switch between conversations in the sidebar.
@@ -227,8 +231,9 @@ All Q&A sessions are saved. Switch between conversations in the sidebar.
 ## RAG Pipeline
 
 ```
-User question → (Agent) Sub-question planning → Vector retrieval (BM25 + semantic) → Top-10 recall
-→ Cross-encoder reranking → Top-3 → LLM answer generation → Self-check & revise
+User question → (Agent) Sub-question planning → semantic retrieval
+→ optional BM25 fusion → optional Cross-encoder reranking → LLM generation
+→ self-check & revise → citations with source preview
 → Sentence-level citation annotation → Response
 
 Follow-up: Selected text + context paragraph → Anchor retrieval → LLM explanation
@@ -252,7 +257,7 @@ Delete message: removes the message and its follow-up chain from the conversatio
 
 | 层级 | 技术 |
 |------|------|
-| 前端 | Next.js 14 + Tailwind CSS |
+| 前端 | Next.js 16 + React 19 + Tailwind CSS 4 |
 | 后端 | Python FastAPI |
 | LLM | DeepSeek V3 API |
 | Embedding | 硅基流动 BGE-M3 |
@@ -265,7 +270,7 @@ Delete message: removes the message and its follow-up chain from the conversatio
 
 ### 1. 下载
 
-👉 **[点击下载 课答 Kecap v1.1.0（Windows 64 位，68.7 MB）](https://github.com/Asrielehat/kecap/releases/download/v1.1.0/Kecap-v1.1.0-win64.zip)**
+👉 **[下载最新 Windows 版本](https://github.com/Asrielehat/kecap/releases/latest)**
 
 或前往 [Releases 页面](https://github.com/Asrielehat/kecap/releases) 选择最新版本。
 
@@ -421,7 +426,9 @@ kecap/
 ## 功能介绍
 
 ### 💬 RAG 答疑
-基于课程资料提问，系统检索相关片段、重排序后生成带溯源引用的答案。
+基于课程资料提问。默认使用语义检索并生成带溯源引用的答案；经过评测后可启用 BM25 融合与 Cross-encoder 重排。
+
+回答依据可选择“严格依据资料”或“资料优先，允许补充知识”。补充知识会单独标明。
 
 ### 🔍 追问（上下文隔离）
 在回答中选中任意文字即可弹出拖拽式追问窗口。追问**上下文隔离**，不会污染主对话历史。支持**嵌套追问链**（追问弹窗内继续追问）。
@@ -439,7 +446,7 @@ kecap/
 在 `backend/skills/<技能名>/` 放入 `SKILL.md` 即可向模型注入自定义行为（name / description / triggers / force / 全历史等），实现按需定制。
 
 ### 📚 文档管理
-支持上传 PDF、PPT、DOCX、MD 文件，自动解析、分块、向量化。
+支持上传 PDF、PPTX、DOCX、MD、TXT 文件，自动解析、分块、向量化。上传过程使用随机存储名、限制文件大小、显示处理进度，并可在启动时恢复中断任务。扫描版 PDF 需先完成 OCR。
 
 ### 📝 对话历史
 所有问答自动保存，可在侧栏切换历史对话。
@@ -466,8 +473,9 @@ kecap/
 ## RAG 链路
 
 ```
-用户提问 → (智能体)子问题规划 → 向量检索(BM25+语义) → 召回Top-10
-→ Cross-encoder Reranker 精排 → Top-3 → LLM生成答案 → 自检并修正
+用户提问 → (智能体)子问题规划 → 语义检索
+→ 可选 BM25 融合 → 可选 Cross-encoder 重排 → LLM 生成
+→ 自检并修正 → 引用与原文预览
 → 逐句标注引用来源 → 返回给用户
 
 追问: 选中文字 + 上下文段落 → 锚点检索 → LLM解释
@@ -475,3 +483,26 @@ kecap/
 
 删除消息: 连同其追问链一起从对话中移除
 ```
+
+## 开发验证
+
+```bash
+# 后端隔离测试（不会读取本地 .env、课程数据库或上传资料）
+python backend/scripts/run_tests.py
+
+# 离线检索基线；结果写入指定 JSON
+python backend/scripts/evaluate_rag.py --output evaluation-report.json
+
+# 前端检查
+cd frontend
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+`backend/evaluation/study_qa.json` 是人工编写的工程回归集。离线分数只用于发现检索回归，不能代替真实课程上的答案和引用人工评审。可选混合检索与重排分别由 `HYBRID_RETRIEVAL_ENABLED`、`RERANKER_ENABLED` 控制；重排还需安装 `sentence-transformers`。
+
+## 许可
+
+版权所有，暂不授予开源许可。详见 [LICENSE](LICENSE)。

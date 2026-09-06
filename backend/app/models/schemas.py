@@ -15,6 +15,7 @@ class DocumentUploadResponse(BaseModel):
 
 # ── 聊天 ──
 class ChatRequest(BaseModel):
+    evidence_mode: Literal["strict", "supplement"] = "supplement"
     course_id: str = Field(..., description="课程 ID，用于限定检索范围")
     question: str = Field(..., min_length=1, max_length=2000)
     conversation_id: Optional[str] = Field(None, description="会话 ID，用于多轮对话")
@@ -24,6 +25,7 @@ class ChatRequest(BaseModel):
 
 
 class Citation(BaseModel):
+    page_end: Optional[int] = None
     """引文溯源"""
     text: str = Field(..., description="引用原文片段")
     document_name: str = Field(..., description="来源文档名")

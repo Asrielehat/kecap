@@ -43,3 +43,8 @@ async def init_db():
     """创建所有表（首次启动调用）"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Backward-compatible additive migration; existing answers are complete.
+        from sqlalchemy import inspect, text
+        columns = await conn.run_sync(lambda sync: [c["name"] for c in inspect(sync).get_columns("messages")])
+        if "status" not in columns:
+            await conn.execute(text("ALTER TABLE messages ADD COLUMN status VARCHAR(20) DEFAULT 'complete' NOT NULL"))
