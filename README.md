@@ -505,4 +505,4 @@ npm run build
 
 ## 许可
 
-版权所有，暂不授予开源许可。详见 [LICENSE](LICENSE)。
+本项目采用 [MIT License](LICENSE) 开源许可。
