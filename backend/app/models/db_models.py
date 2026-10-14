@@ -38,6 +38,17 @@ class Document(Base):
     chunks: Mapped[list["Chunk"]] = relationship(back_populates="document", cascade="all, delete-orphan")
 
 
+class PageAnnotation(Base):
+    """Versioned per-page ink. The source document is never modified."""
+    __tablename__ = "page_annotations"
+
+    document_id: Mapped[str] = mapped_column(String(36), ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True)
+    page_number: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    strokes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Chunk(Base):
     """文档分块记录 —— 与 Qdrant 中的向量一一对应"""
     __tablename__ = "chunks"

@@ -88,8 +88,17 @@ if FRONTEND_DIR.exists():
             return JSONResponse({"detail": "Not Found"}, status_code=404)
 
         file_path = FRONTEND_DIR / full_path
-        if file_path.is_file():
+        if file_path.resolve().is_relative_to(FRONTEND_DIR.resolve()) and file_path.is_file():
             return FileResponse(file_path)
+
+        # Next static export emits /classroom.html and /classroom/reader.html.
+        # Resolve these paths before the SPA fallback to the Chat homepage.
+        html_path = FRONTEND_DIR / f"{full_path.rstrip('/')}.html"
+        if html_path.is_file() and html_path.resolve().is_relative_to(FRONTEND_DIR.resolve()):
+            return FileResponse(html_path)
+        nested_index = file_path / "index.html"
+        if nested_index.is_file() and nested_index.resolve().is_relative_to(FRONTEND_DIR.resolve()):
+            return FileResponse(nested_index)
 
         # SPA fallback
         index_path = FRONTEND_DIR / "index.html"

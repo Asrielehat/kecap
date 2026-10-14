@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
 from app.core.database import get_db
-from app.models.db_models import Course, Document, Chunk, Conversation, Message, FollowUp, gen_uuid
+from app.models.db_models import Course, Document, Chunk, Conversation, Message, FollowUp, PageAnnotation, gen_uuid
 from app.models.schemas import CourseCreate, CourseResponse
 
 router = APIRouter(prefix="/api/courses", tags=["课程管理"])
@@ -103,6 +103,9 @@ async def delete_course(course_id: str, db: AsyncSession = Depends(get_db)):
                 pass
 
     # 删除追问记录（外键引用消息/对话/课程）
+    await db.execute(delete(PageAnnotation).where(PageAnnotation.document_id.in_(
+        select(Document.id).where(Document.course_id == course_id)
+    )))
     await db.execute(delete(FollowUp).where(FollowUp.course_id == course_id))
     # 删除消息（先于对话）
     await db.execute(delete(Message).where(

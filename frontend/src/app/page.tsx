@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -659,6 +660,7 @@ export default function Home() {
           <>
             <div className="p-4 border-b border-zinc-200">
               <h1 className="text-lg font-bold text-zinc-800">📚 课答</h1>
+              <Link href="/classroom" className="mt-2 block rounded-lg bg-blue-700 px-3 py-2 text-center text-sm text-white">上课模式</Link>
             </div>
             <div className="p-3 flex-1 overflow-auto space-y-4">
               {/* 创建课程 */}
@@ -785,6 +787,7 @@ export default function Home() {
               <h1 className="text-base font-bold text-zinc-800 truncate">
                 {courses.find((c) => c.id === selectedCourse)?.name || "课程"}
               </h1>
+              <Link href="/classroom" className="mt-2 block rounded-lg bg-blue-700 px-3 py-2 text-center text-sm text-white">上课模式</Link>
               <div className="flex items-center gap-2 mt-1">
                 <span className="text-xs text-zinc-400">
                   {courses.find((c) => c.id === selectedCourse)?.document_count || 0} 份文档

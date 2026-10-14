@@ -205,3 +205,28 @@ class ApiTests(unittest.TestCase):
         preview = self.client.get(f"/api/documents/chunks/{chunk_id}").json()
         self.assertEqual(preview["content"], "source preview")
         self.assertEqual(self.client.get(preview["source_url"]).content, b"source preview")
+
+    def test_classroom_ink_version_conflict(self):
+        from app.models.db_models import gen_uuid
+        document_id = gen_uuid()
+        source = Path(get_settings().upload_dir) / f"{document_id}.pdf"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b"%PDF-1.4\nuntouched")
+        async def create_document():
+            async with async_session() as db:
+                db.add(Document(id=document_id, course_id=self.course, filename="lesson.pdf",
+                                file_type="pdf", file_size=source.stat().st_size,
+                                chunk_count=0, storage_path=str(source)))
+                await db.commit()
+        self.client.portal.call(create_document)
+        url = f"/api/classroom/documents/{document_id}/pages/1"
+        stroke = {"id": "s1", "tool": "pen", "color": "#2255cc", "width": 3,
+                  "points": [{"x": 0.2, "y": 0.4, "pressure": 0.5}]}
+        self.assertEqual(self.client.get(url).json()["version"], 0)
+        first = self.client.put(url, json={"base_version": 0, "strokes": [stroke]})
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["version"], 1)
+        self.assertEqual(self.client.put(url, json={"base_version": 0, "strokes": []}).status_code, 409)
+        self.assertEqual(self.client.get(url).json()["strokes"], [stroke])
+        self.assertEqual(self.client.put(url, json={"base_version": 1, "strokes": []}).json()["version"], 2)
+        self.assertEqual(source.read_bytes(), b"%PDF-1.4\nuntouched")

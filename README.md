@@ -10,6 +10,8 @@
 
 Students upload course materials (textbooks, slides, notes), and the assistant provides **accurate, traceable** AI Q&A and adaptive practice based on RAG (Retrieval-Augmented Generation).
 
+The **Classroom Mode** button opens uploaded PDFs for reading and handwritten annotations. Ink is stored separately from the source PDF, saved locally first, and synchronized with the backend when online. See [Classroom Mode guide](docs/classroom.md) for behavior, setup checks, and current limitations.
+
 ![Kecap main interface](docs/images/main-interface.png)
 
 ## Tech Stack

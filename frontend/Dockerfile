@@ -1,7 +1,7 @@
 # ── 前端容器：Next.js ──
 
 # 阶段 1：构建
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 
 # 接收 build-time 环境变量（Next.js 会在构建时内联 NEXT_PUBLIC_*）
@@ -18,7 +18,7 @@ COPY . .
 RUN npm run build
 
 # 阶段 2：运行（只保留生产文件）
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
